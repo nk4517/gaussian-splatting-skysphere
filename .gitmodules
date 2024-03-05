@@ -7,3 +7,6 @@
 [submodule "submodules/diff-gaussian-rasterization-w-depth"]
 	path = submodules/diff-gaussian-rasterization-w-depth
 	url = https://github.com/JonathonLuiten/diff-gaussian-rasterization-w-depth.git
+[submodule "submodules/diff-gaussian-rasterization-ashawkey"]
+	path = submodules/diff-gaussian-rasterization-ashawkey
+	url = https://github.com/ashawkey/diff-gaussian-rasterization
