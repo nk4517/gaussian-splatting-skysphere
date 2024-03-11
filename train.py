@@ -9,19 +9,22 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-import os
-import torch
+import os, sys
+from typing import Optional
 from random import randint
+import uuid
+from argparse import ArgumentParser, Namespace
+
+import torch
+from tqdm import tqdm
+
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
-import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
-import uuid
-from tqdm import tqdm
 from utils.image_utils import psnr
-from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
