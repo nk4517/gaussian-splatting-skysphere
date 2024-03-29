@@ -62,3 +62,5 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
     else:
         return ssim_map.mean(1).mean(1).mean(1)
 
+def binary_cross_entropy(input, target):
+    return -(target * torch.log(input) + (1 - target) * torch.log(1 - input)).mean()

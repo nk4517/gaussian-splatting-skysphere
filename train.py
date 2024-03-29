@@ -18,7 +18,7 @@ from argparse import ArgumentParser, Namespace
 import torch
 from tqdm import tqdm
 
-from utils.loss_utils import l1_loss, ssim
+from utils.loss_utils import l1_loss, ssim, binary_cross_entropy
 from gaussian_renderer import render
 from gaussian_renderer.network_gui import NetworkGUI
 from scene import Scene, GaussianModel
