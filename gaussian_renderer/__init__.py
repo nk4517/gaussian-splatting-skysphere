@@ -18,8 +18,6 @@ from utils.sh_utils import eval_sh
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
     """
     Render the scene. 
-    
-    Background tensor (bg_color) must be on GPU!
     """
  
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
