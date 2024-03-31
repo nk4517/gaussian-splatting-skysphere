@@ -103,6 +103,11 @@ def training(dataset, opt: OptimizationParams, pipe: PipelineParams,
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
 
+        if viewpoint_cam.sky_mask is not None:
+            sky_select = (~(viewpoint_cam.sky_mask.to(torch.bool))).cuda()
+        else:
+            sky_select = None
+
         update_loss_from_splat_shape(gaussians, opt, loss)
 
 
