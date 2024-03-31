@@ -286,8 +286,12 @@ class FRU1:
 
 
 class Camera(MiniCamKRT):
-    def __init__(self, colmap_id, K, R, T, image, image_name, uid, trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device="cuda",
-                 gt_alpha_mask=None, sky_mask=None, normal=None, depth=None):
+    def __init__(self, colmap_id, K: _tnp, R: _tnp, T: _tnp, image: torch.Tensor, image_name: str, uid: int,
+                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device="cuda",
+                 gt_alpha_mask=None,
+                 sky_mask=None,
+                 normal=None,
+                 depth=None):
 
         image_width = image.shape[2]
         image_height = image.shape[1]
@@ -296,11 +300,14 @@ class Camera(MiniCamKRT):
                          uid=uid, image_name=image_name)
 
         self.colmap_id = colmap_id
-        self.sky_mask = sky_mask
-        self.normal = normal
-        self.depth = depth
 
         self.original_image = image.clamp(0.0, 1.0).to(torch.float32).to(self.data_device)
+
+        self.sky_mask: torch.Tensor | None = sky_mask
+        self.normal: torch.Tensor | None = normal
+        self.depth: torch.Tensor | None = depth
+        self.mask: torch.Tensor | None = gt_alpha_mask
+
 
     def updateImage(self, image,
                     gt_alpha_mask=None,
