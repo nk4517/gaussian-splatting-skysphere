@@ -103,6 +103,15 @@ class OptimizationParams(ParamGroup):
         self.lambda_iso = 0.25
         self.aniso_ratio_threshold = 2.5
 
+        # skysphere
+        self.skysphere_loss = False
+        self.sky_depth_loss = False
+        self.lambda_skysphere_mask = 0.2
+        self.lambda_skysphere_dist  = 0.2
+        self.lambda_skysphere_entropy = 0.2
+        self.lambda_sky_depth = 0.001
+        self.skysphere_radius = 300
+
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
         self.densify_from_iter = 500
