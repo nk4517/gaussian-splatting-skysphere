@@ -136,7 +136,7 @@ class GaussianModel:
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
-    def params_from_points3d(self, points3d, colors, dist2=None):
+    def params_from_points3d(self, points3d, colors, dist2=None, skyness=0.5):
         if points3d.shape[0] < 3:
             return
         assert points3d.isfinite().all()
@@ -592,13 +592,12 @@ class GaussianModel:
         self.denom[update_filter] += 1
 
 
-    def densify_from_depthmap(self, viewpoint_cam, depth, mask, gt_image):
+    def densify_from_depthmap(self, viewpoint_cam, depth, mask, gt_image, skyness=0.5):
         assert depth.shape == mask.shape == gt_image.shape[1:]
         points3d_all = depth_to_points3d(depth, viewpoint_cam)
         points3d = points3d_all[mask]
         colors = gt_image.permute(1, 2, 0)[mask]
 
-        params = self.params_from_points3d(points3d, colors)
-
-        #update gaussians
-        self.densification_postfix(*params)
+        params = self.params_from_points3d(points3d, colors, None, skyness)
+        if params is not None:
+            self.densification_postfix(*params)

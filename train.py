@@ -25,6 +25,7 @@ from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
 from utils.image_utils import psnr
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from utils.skysphere_utils import add_skysphere_points3d
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -50,6 +51,11 @@ def training(dataset, opt: OptimizationParams, pipe: PipelineParams,
 
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
+
+    with torch.no_grad():
+        if dataset.sky_seg:
+            add_skysphere_points3d(scene, gaussians, opt.skysphere_radius)
+
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
