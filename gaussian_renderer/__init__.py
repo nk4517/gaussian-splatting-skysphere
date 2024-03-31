@@ -17,8 +17,8 @@ from utils.sh_utils import eval_sh
 from utils.general_utils import build_rotation
 import torch.nn.functional as F
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, 
-           return_depth = False, return_normal = False, return_opacity = False):
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None,
+           return_depth = False, return_normal = False, return_opacity = False, return_skyness=False):
     """
     Render the scene. 
     """
@@ -156,5 +156,39 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             rotations = rotations,
             cov3D_precomp = cov3D_precomp)
         return_dict.update({'render_opacity': render_opacity.mean(dim=0)})
+
+
+    if return_skyness:
+        # default is uncertain = probability 0.5
+        bg_color = torch.tensor([0.5,0.5,0.5], dtype=torch.float32).cuda()
+        skyness = pc.get_skysphere.repeat(1, 3)
+
+        raster_settings = GaussianRasterizationSettings(
+            image_height=int(viewpoint_camera.image_height),
+            image_width=int(viewpoint_camera.image_width),
+            tanfovx=tanfovx,
+            tanfovy=tanfovy,
+            bg=bg_color, # <<<<<<<<<<<<<<<<
+            scale_modifier=scaling_modifier,
+            viewmatrix=viewpoint_camera.world_view_transform,
+            projmatrix=viewpoint_camera.full_proj_transform,
+            sh_degree=pc.active_sh_degree,
+            campos=viewpoint_camera.camera_center,
+            prefiltered=False,
+            debug=pipe.debug
+        )
+
+        rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+
+        render_skyness, _, _, _ = rasterizer(
+            means3D=means3D,
+            means2D=means2D,
+            shs=None,
+            colors_precomp=skyness,
+            opacities=opacity,
+            scales=scales,
+            rotations=rotations,
+            cov3D_precomp=cov3D_precomp)
+        return_dict.update({'rendered_skyness': render_skyness.mean(dim=0)})
 
     return return_dict
