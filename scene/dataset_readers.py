@@ -218,7 +218,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, sky_seg=False, load_norm
                            ply_path=ply_path)
     return scene_info
 
-def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png"):
+def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png", is_train=True):
     cam_infos = []
 
     with open(os.path.join(path, transformsfile)) as json_file:
@@ -253,6 +253,14 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
 
             sky_mask = np.ones_like(image)[:, :, 0].astype(np.uint8)
 
+            if is_train:
+                normal_path = image_path.replace("train", "normals")[:-4]+".npy"
+                normal = np.load(normal_path).astype(np.float32)
+                normal = (normal - 0.5) * 2.0
+                # normal[2, :, :] *= -1
+            else:
+                normal = np.zeros_like(image).transpose(2, 0, 1)
+
             w = image.size[1]
             h = image.size[0]
             f = fov2focal(fovx, h)
@@ -271,7 +279,7 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
     print("Reading Training Transforms")
     train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
     print("Reading Test Transforms")
-    test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension)
+    test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension, is_train=False)
     
     if not eval:
         train_cam_infos.extend(test_cam_infos)
