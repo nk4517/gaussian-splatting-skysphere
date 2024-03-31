@@ -34,6 +34,7 @@ class CameraInfo(NamedTuple):
     image_name: str
     width: int
     height: int
+    gt_mask: Optional[np.ndarray] = None
     sky_mask: Optional[np.ndarray] = None
     normal: Optional[np.ndarray] = None
     depth: Optional[np.ndarray] = None
@@ -98,8 +99,8 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, load_mask=F
         else:
             assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
 
-        image_path = os.path.join(images_folder, os.path.basename(extr.name))
-        image_name = os.path.basename(image_path).split(".")[0]
+        datas_path = Path(images_folder).parent
+        image_path = (Path(images_folder) / extr.name).absolute()
         image = Image.open(image_path)
 
         fx_orig, fy_orig, cx_orig, cy_orig = intr.params
@@ -110,26 +111,32 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, load_mask=F
         ])
 
 
-        # #sky mask
-        if sky_seg:
-            sky_path = image_path.replace("images", "mask")[:-4]+".npy"
-            sky_mask = np.load(sky_path).astype(np.uint8)
-        else:
-            sky_mask = None
-            
-        if load_normal:
-            normal_path = image_path.replace("images", "normals")[:-4]+".npy"
-            normal = np.load(normal_path).astype(np.float32)
-            normal = (normal - 0.5) * 2.0
-        else:
-            normal = None
+        # sky mask
+        sky_mask = None
+        if load_skymask:
+            sky_mask = try_load_mask(extr.name, datas_path, ("skymask", "sky_mask", "sky-mask", "masks", "mask"))
 
+        # objects mask
+        gt_mask = None
+        if load_mask:
+            gt_mask = try_load_mask(extr.name, datas_path, ("mask", "masks"))
+
+
+        normals = None
+        if load_normal:
+            normals_path = (image_path.parent.parent / "normals" / extr.name).with_suffix(".npy")
+            if normals_path.is_file():
+                normals = np.load(normals_path).astype(np.float32)
+                normals = (normals - 0.5) * 2.0
+
+        depth = None
         if load_depth:
             # depth_path = image_path.replace("images", "monodepth")[:-4]+".npy"
-            depth_path = image_path.replace("images", "metricdepth")[:-4]+".npy"
-            depth = np.load(depth_path).astype(np.float32)
-        else:
-            depth = None
+            depth_path = (image_path.parent.parent / "metricdepth" / extr.name).with_suffix(".npy") # "monodepth"
+            if depth_path.is_file():
+                depth = np.load(depth_path).astype(np.float32)
+
+        image_name = Path(extr.name).with_suffix("").as_posix()
 
         cam_info = CameraInfo(uid=uid, K=K, R=R, T=T, width=width, height=height, image=image,
                               image_path=image_path, image_name=image_name,
@@ -139,6 +146,32 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, load_mask=F
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
+
+
+def try_load_mask(image_name: str, datas_path: Path, subfolders=("mask",)) -> Optional[np.ndarray]:
+    mask = None
+    for sf in subfolders:
+        d = datas_path / sf
+        if not d.is_dir():
+            continue
+        for f in ((d / image_name).with_suffix(".npy"), (d / image_name).with_suffix(".png")):
+            if not f.is_file():
+                continue
+
+            if f.suffix.lower() == ".npy":
+                mask = np.load(f).astype(np.uint8)
+            else:
+                mask = cv2.imread(str(f), cv2.IMREAD_GRAYSCALE)
+
+            if mask is not None and (np.all(mask == 0) or np.all(mask > 0)):
+                # эта маска скорее всего косячная
+                mask = None
+
+            if mask is not None:
+                break
+
+    return mask
+
 
 def fetchPly(path):
     plydata = PlyData.read(path)
