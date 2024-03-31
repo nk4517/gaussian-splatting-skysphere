@@ -89,6 +89,10 @@ def training(dataset, opt: OptimizationParams, pipe: PipelineParams,
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
 
+        update_loss_from_splat_shape(gaussians, opt, loss)
+
+
+
         loss.backward()
         iter_end.record()
 
@@ -129,6 +133,45 @@ def training(dataset, opt: OptimizationParams, pipe: PipelineParams,
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+
+def update_loss_from_splat_shape(gaussians: GaussianModel, opt: OptimizationParams, loss):
+
+    # flatten loss with anisotropy regularization
+    if opt.flatten_loss or opt.flatten_aniso_loss:
+        # нормаль должна быть значительно короче остальных осей...
+
+        scales = gaussians.get_scaling
+        sorted_scales, sorted_indices = scales.sort(dim=1, descending=True)
+
+        # Split sorted scales into s1 (largest), s2 (second largest), and s3 (smallest)
+        s1, s2, s3 = sorted_scales.split(1, dim=1)
+
+        # Compute flatten loss based on s3 (smallest scaling)
+        min_scale = s3
+        flatten_loss = torch.abs(min_scale).mean()
+
+        if opt.flatten_aniso_loss:
+            # ... но при этом сплаты не должны превращаться в иглы, а только в более-менее плоские диски
+
+            # from https://arxiv.org/html/2401.15318v1 Eq. (6)
+            a = opt.aniso_ratio_threshold
+            aniso_loss = torch.clamp(s1 / s2 - a, 0, 1e6).mean()
+
+            loss += opt.lambda_flatten * flatten_loss + opt.lambda_aniso * aniso_loss
+        else:
+            loss += opt.lambda_flatten * flatten_loss
+
+    elif opt.isotropy_loss:
+        # более-менее ровные  шарики, ну может слегка вытянутые по одной из осей
+        scales = gaussians.get_scaling
+
+        # from https://arxiv.org/html/2312.06741v1 Eq. (14)
+        mean_scales = torch.mean(scales, dim=1, keepdim=True)
+        isotropy_loss = torch.norm(scales - mean_scales, p=1, dim=1).mean()
+
+        loss += opt.lambda_iso * isotropy_loss
+    return loss
+
 
 def prepare_output_and_logger(args):    
     if not args.model_path:

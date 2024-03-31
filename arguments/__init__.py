@@ -82,6 +82,16 @@ class OptimizationParams(ParamGroup):
         self.rotation_lr = 0.001
         self.percent_dense = 0.01
         self.lambda_dssim = 0.2
+
+        # splat shape regularization
+        self.flatten_loss = False
+        self.flatten_aniso_loss = False
+        self.isotropy_loss = True
+        self.lambda_flatten = 0.5
+        self.lambda_aniso = 5.0
+        self.lambda_iso = 0.25
+        self.aniso_ratio_threshold = 2.5
+
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
         self.densify_from_iter = 500
