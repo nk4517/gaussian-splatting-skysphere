@@ -99,6 +99,13 @@ def build_rotation(r):
     R[:, 2, 2] = 1 - 2 * (x*x + y*y)
     return R
 
+def build_scaling(s):
+    L = torch.zeros((s.shape[0], 3, 3), dtype=torch.float, device="cuda")
+    L[:,0,0] = s[:,0]
+    L[:,1,1] = s[:,1]
+    L[:,2,2] = s[:,2]
+    return L
+
 def build_scaling_rotation(s, r):
     L = torch.zeros((s.shape[0], 3, 3), dtype=torch.float, device="cuda")
     R = build_rotation(r)
@@ -132,3 +139,29 @@ def safe_state(silent):
     np.random.seed(0)
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
+
+
+def kl_divergence(mu_0, rotation_0_q, scaling_0_diag, mu_1, rotation_1_q, scaling_1_diag):
+    # from https://arxiv.org/abs/2312.02973 Eq. (7)
+
+    # claculate cov_0
+    rotation_0 = build_rotation(rotation_0_q)
+    scaling_0 = build_scaling(scaling_0_diag)
+    L_0 = rotation_0 @ scaling_0
+    cov_0 = L_0 @ L_0.transpose(1, 2)
+
+    # claculate inverse of cov_1
+    rotation_1 = build_rotation(rotation_1_q)
+    scaling_1_inv = build_scaling(1/scaling_1_diag)
+    L_1_inv = rotation_1 @ scaling_1_inv
+    cov_1_inv = L_1_inv @ L_1_inv.transpose(1, 2)
+
+    # difference of mu_1 and mu_0
+    mu_diff = mu_1 - mu_0
+
+    # calculate kl divergence
+    kl_div_0 = torch.vmap(torch.trace)(cov_1_inv @ cov_0)
+    kl_div_1 = mu_diff[:,None].matmul(cov_1_inv).matmul(mu_diff[..., None]).squeeze()
+    kl_div_2 = torch.log(torch.prod((scaling_1_diag/scaling_0_diag)**2, dim=1))
+    kl_div = 0.5 * (kl_div_0 + kl_div_1 + kl_div_2 - 3)
+    return kl_div
