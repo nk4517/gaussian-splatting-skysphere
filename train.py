@@ -114,6 +114,55 @@ def training(dataset, opt: OptimizationParams, pipe: PipelineParams,
         else:
             sky_select = None
 
+        if opt.skysphere_loss and sky_select is not None:
+            skymask_prob = sky_select.to(torch.float32).clamp(0, 1).clamp(1e-6, 1 - 1e-6)
+            rendered_skyness_prob = render_pkg["rendered_skyness"].reshape(sky_select.shape).clamp(1e-6, 1 - 1e-6)
+
+            splats_skyness_prob = gaussians.get_skysphere.squeeze().clamp(1e-6, 1 - 1e-6)
+
+            skysphere_mask_loss = binary_cross_entropy(rendered_skyness_prob, skymask_prob)
+
+            # real_xyz_world_dist = torch.norm(gaussians.get_xyz, dim=1)
+            # splats_dist_gt_100 = (real_xyz_world_dist > 100).squeeze().to(torch.float32).clamp(0, 1).clamp(1e-6, 1 - 1e-6)
+            #
+            # skysphere_by_distance_loss = binary_cross_entropy(
+            #     splats_skyness_prob,
+            #     splats_dist_gt_100
+            # )
+
+            # minimization of crossentropy with itself = entropy minimization
+            skysphere_entropy_loss = binary_cross_entropy(splats_skyness_prob, splats_skyness_prob)
+
+
+            loss += (opt.lambda_skysphere_mask * skysphere_mask_loss
+                     # + opt.lambda_skysphere_dist * skysphere_by_distance_loss
+                     + opt.lambda_skysphere_entropy * skysphere_entropy_loss)
+
+
+        if opt.sky_depth_loss:
+            update_loss_from_skydepth(gaussians, opt, loss)
+
+        # if opt.sky_depth_loss:
+        #     pass
+        #
+            # rendered_depth_sky = render_pkg['rendered_depth'].reshape(viewpoint_cam.sky_sphere_depthmap.shape)[sky_select]
+            # rendered_alpha_sky = render_pkg['rendered_alpha'].reshape(viewpoint_cam.sky_sphere_depthmap.shape)[sky_select]
+            # if sky_select is not None and viewpoint_cam.sky_sphere_depthmap is not None:
+            #     dmap_rendered = rendered_depth_sky
+            #     dmap_ideal = viewpoint_cam.sky_sphere_depthmap[sky_select].cuda()
+            #     sky_depth_diff = torch.abs(torch.log(torch.clamp(dmap_rendered, 1)) - torch.log(torch.clamp(dmap_ideal, 1)))
+            #     # ещё и на alpha завязать, чтобы оно пыталось "выключать" косячные пиксели через прозрачность,
+            #     # и их потом prune зачистит
+            #     # чем меньше прозрачность, тем меньше потеря
+            #     sky_depth_diff *= torch.clamp(rendered_alpha_sky, 0, 1)
+            #
+            #     good_diff = sky_depth_diff > 1e-6
+            #     l1_sky_depth = torch.clamp(sky_depth_diff[good_diff], 0, 1e10).mean()
+            #
+            #
+            #     loss += opt.lambda_sky_depth * l1_sky_depth
+
+
         update_loss_from_splat_shape(gaussians, opt, loss)
 
 
@@ -166,7 +215,8 @@ def training(dataset, opt: OptimizationParams, pipe: PipelineParams,
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold, kl_threshold=opt.kl_threshold)
+                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.1, scene.cameras_extent, size_threshold,
+                                                kl_threshold=opt.kl_threshold, skysphere_radius=opt.skysphere_radius)
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
@@ -179,6 +229,7 @@ def training(dataset, opt: OptimizationParams, pipe: PipelineParams,
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+
 
 def update_loss_from_splat_shape(gaussians: GaussianModel, opt: OptimizationParams, loss):
 
@@ -216,6 +267,32 @@ def update_loss_from_splat_shape(gaussians: GaussianModel, opt: OptimizationPara
         isotropy_loss = torch.norm(scales - mean_scales, p=1, dim=1).mean()
 
         loss += opt.lambda_iso * isotropy_loss
+    return loss
+
+
+def update_loss_from_skydepth(gaussians: GaussianModel, opt: OptimizationParams, loss):
+    # приягиваем небо, отклоняющееся от скайсферы
+    sky_by_attr = gaussians.get_skysphere[:, 0] >= 0.6
+
+    real_xyz_sky_dist = torch.norm(gaussians.get_xyz[sky_by_attr], dim=1)
+    sky_depth_diff = ((real_xyz_sky_dist - opt.skysphere_radius).abs().clamp(1e-6) ** 0.5)
+
+    if sky_depth_diff.shape[0] > 0:
+        l1_sky_depth = sky_depth_diff.mean()
+        loss += opt.lambda_sky_depth * l1_sky_depth
+
+    # гасим НЕ небо дальше 1/3 радиуса скайсферы от начала мира
+    world_by_attr = gaussians.get_skysphere[:, 0] < 0.4
+
+    opa_world = gaussians.get_opacity[world_by_attr].squeeze()
+    real_xyz_world_dist = torch.norm(gaussians.get_xyz[world_by_attr], dim=1)
+    world_depth_diff = ((real_xyz_world_dist - opt.skysphere_radius / 3).clamp(0) ** 2)
+    world_depth_diff *= opa_world
+
+    if world_depth_diff.shape[0] > 0:
+        l1_world_depth = world_depth_diff.mean()
+        loss += opt.lambda_sky_depth * l1_world_depth
+
     return loss
 
 
