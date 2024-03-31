@@ -92,6 +92,16 @@ def training(dataset, opt: OptimizationParams, pipe: PipelineParams,
         update_loss_from_splat_shape(gaussians, opt, loss)
 
 
+        if opt.semitransparent_loss:
+            # полупрозрачные сплаты по возможности сделать или полностью прозрачными, или полностью непрозрачными
+            # (а потом удалить полностью прозрачные в prune)
+            # хорошо подходит для мелких объектов, но очень так-себе для уличных сцен с большой глубиной
+
+            opacity = gaussians.get_opacity.clamp(1e-6, 1-1e-6)
+            # minimization of crossentropy with itself = entropy minimization
+            semitransparent_loss = binary_cross_entropy(opacity, opacity)
+            loss += opt.lambda_semitransparent * semitransparent_loss
+
 
         loss.backward()
         iter_end.record()
