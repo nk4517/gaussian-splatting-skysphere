@@ -77,6 +77,16 @@ def loadCam(args, id, cam_info, resolution_scale):
         resized_gt_mask = None
 
 
+    if cam_info.normal is not None:
+        resized_normal = torch.tensor(cv2.resize(cam_info.normal.transpose((1, 2, 0)), resolution, interpolation=cv2.INTER_NEAREST)).to(resized_image_rgb.device)
+        resized_normal = resized_normal.permute((2, 0, 1))
+    else:
+        resized_normal = None
+    
+    if cam_info.depth is not None:
+        resized_depth = torch.tensor(cv2.resize(cam_info.depth.squeeze(), resolution, interpolation=cv2.INTER_NEAREST)).to(resized_image_rgb.device)
+    else:
+        resized_depth = None
 
     gt_image = resized_image_rgb[:3, ...]
 

@@ -54,6 +54,8 @@ class ModelParams(ParamGroup):
         self._white_background = False
         self.data_device = "cuda"
         self.sky_seg = False
+        self.load_normal = False
+        self.load_depth = False
         self.eval = False
         super().__init__(parser, "Loading Parameters", sentinel)
 
@@ -81,7 +83,14 @@ class OptimizationParams(ParamGroup):
         self.scaling_lr = 0.005
         self.rotation_lr = 0.001
         self.percent_dense = 0.01
+        self.normal_loss = False
+        self.sparse_loss = False
+        self.depth_loss = False
+        self.depth2normal_loss = False 
         self.semitransparent_loss = False
+
+        self.lambda_l1_normal = 0.01
+        self.lambda_cos_normal = 0.01
         self.lambda_dssim = 0.2
         self.lambda_semitransparent = 0.001
 

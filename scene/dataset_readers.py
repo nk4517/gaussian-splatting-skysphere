@@ -35,6 +35,8 @@ class CameraInfo(NamedTuple):
     width: int
     height: int
     sky_mask: Optional[np.ndarray] = None
+    normal: Optional[np.ndarray] = None
+    depth: Optional[np.ndarray] = None
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -66,7 +68,7 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sky_seg=False):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, load_mask=False, load_skymask=False, load_normal=False, load_depth=False):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -115,8 +117,25 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sky_seg=Fal
         else:
             sky_mask = None
             
+        if load_normal:
+            normal_path = image_path.replace("images", "normals")[:-4]+".npy"
+            normal = np.load(normal_path).astype(np.float32)
+            normal = (normal - 0.5) * 2.0
+        else:
+            normal = None
+
+        if load_depth:
+            # depth_path = image_path.replace("images", "monodepth")[:-4]+".npy"
+            depth_path = image_path.replace("images", "metricdepth")[:-4]+".npy"
+            depth = np.load(depth_path).astype(np.float32)
+        else:
+            depth = None
+
         cam_info = CameraInfo(uid=uid, K=K, R=R, T=T, width=width, height=height, image=image,
-                              image_path=image_path, image_name=image_name, width=width, height=height, sky_mask=sky_mask)
+                              image_path=image_path, image_name=image_name,
+                              gt_mask=gt_mask, sky_mask=sky_mask, normal=normals, depth=depth,
+                              )
+
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
@@ -129,7 +148,8 @@ def fetchPly(path):
         colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
     else:
         colors = np.ones_like(positions)
-    normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    # normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    normals = np.zeros_like(positions)
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
 
 def storePly(path, xyz, rgb):
@@ -149,7 +169,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8, sky_seg=False):
+def readColmapSceneInfo(path, images, eval, llffhold=8, sky_seg=False, load_normal=False, load_depth=False):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -162,7 +182,9 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, sky_seg=False):
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
     reading_dir = "images" if images == None else images
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir), sky_seg=sky_seg)
+
+    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir),
+                                           load_mask=load_mask, load_skymask=load_skymask, load_normal=load_normal, load_depth=load_depth)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:

@@ -14,8 +14,11 @@ import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
+from utils.general_utils import build_rotation
+import torch.nn.functional as F
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, 
+           return_depth = False, return_normal = False, return_opacity = False):
     """
     Render the scene. 
     """
@@ -92,7 +95,66 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
-    return {"render": rendered_image,
+    return_dict =  {"render": rendered_image,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
             "radii": radii}
+
+    if return_depth:
+        projvect1 = viewpoint_camera.world_view_transform[:,2][:3].detach()
+        projvect2 = viewpoint_camera.world_view_transform[:,2][-1].detach()
+        means3D_depth = (means3D * projvect1.unsqueeze(0)).sum(dim=-1,keepdim=True) + projvect2
+        means3D_depth = means3D_depth.repeat(1,3)
+        render_depth, _ = rasterizer(
+            means3D = means3D,
+            means2D = means2D,
+            shs = None,
+            colors_precomp = means3D_depth,
+            opacities = opacity,
+            scales = scales,
+            rotations = rotations,
+            cov3D_precomp = cov3D_precomp)
+        render_depth = render_depth.mean(dim=0) 
+        return_dict.update({'render_depth': render_depth})
+    
+    if return_normal:
+        rotations_mat = build_rotation(rotations)
+        scales = pc.get_scaling
+        min_scales = torch.argmin(scales, dim=1)
+        indices = torch.arange(min_scales.shape[0])
+        normal = rotations_mat[indices, :, min_scales]
+
+        # convert normal direction to the camera; calculate the normal in the camera coordinate
+        view_dir = means3D - viewpoint_camera.camera_center
+        normal   = normal * ((((view_dir * normal).sum(dim=-1) < 0) * 1 - 0.5) * 2)[...,None]
+
+        R_w2c = viewpoint_camera.R.T
+        normal = (R_w2c @ normal.transpose(0, 1)).transpose(0, 1)
+  
+        render_normal, _ = rasterizer(
+            means3D = means3D,
+            means2D = means2D,
+            shs = None,
+            colors_precomp = normal,
+            opacities = opacity,
+            scales = scales,
+            rotations = rotations,
+            cov3D_precomp = cov3D_precomp)
+        render_normal = F.normalize(render_normal, dim = 0)
+        return_dict.update({'render_normal': render_normal})
+
+    if return_opacity:
+        density = torch.ones_like(means3D)
+  
+        render_opacity, _ = rasterizer(
+            means3D = means3D,
+            means2D = means2D,
+            shs = None,
+            colors_precomp = density,
+            opacities = opacity,
+            scales = scales,
+            rotations = rotations,
+            cov3D_precomp = cov3D_precomp)
+        return_dict.update({'render_opacity': render_opacity.mean(dim=0)})
+
+    return return_dict

@@ -81,11 +81,25 @@ def training(dataset, opt: OptimizationParams, pipe: PipelineParams,
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
+        #render_pkg = render(viewpoint_cam, gaussians, pipe, bg, return_normal=args.normal_loss)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, 
+                            return_normal=opt.normal_loss, return_opacity=True, return_depth=opt.depth_loss or opt.depth2normal_loss)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+
+        # # opacity mask
+        # if False: # iteration < opt.propagated_iteration_begin and opt.depth_loss:
+        #     opacity_mask = render_pkg['rendered_alpha'] > 0.999
+        #     opacity_mask = opacity_mask.unsqueeze(0).repeat(3, 1, 1)
+        # else:
+        #     opacity_mask = render_pkg['rendered_alpha'] > 0.0
+        #     opacity_mask = opacity_mask.unsqueeze(0).repeat(3, 1, 1)
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
+
+        # Ll1 = l1_loss(image[opacity_mask], gt_image[opacity_mask])
+        # loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image, mask=opacity_mask))
+
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
 
@@ -102,6 +116,17 @@ def training(dataset, opt: OptimizationParams, pipe: PipelineParams,
             semitransparent_loss = binary_cross_entropy(opacity, opacity)
             loss += opt.lambda_semitransparent * semitransparent_loss
 
+        if opt.normal_loss:
+            rendered_normal = render_pkg['rendered_normal']
+            if viewpoint_cam.normal is not None:
+                normal_gt = viewpoint_cam.normal.cuda()
+                if viewpoint_cam.sky_mask is not None:
+                    filter_mask = viewpoint_cam.sky_mask.to(normal_gt.device).to(torch.bool)
+                    normal_gt[~(filter_mask.unsqueeze(0).repeat(3, 1, 1))] = -10
+                filter_mask = (normal_gt != -10)[0, :, :].to(torch.bool)
+                l1_normal = torch.abs(rendered_normal - normal_gt).sum(dim=0)[filter_mask].mean()
+                cos_normal = (1. - torch.sum(rendered_normal * normal_gt, dim = 0))[filter_mask].mean()
+                loss += opt.lambda_l1_normal * l1_normal + opt.lambda_cos_normal * cos_normal
 
         loss.backward()
         iter_end.record()

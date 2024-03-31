@@ -287,7 +287,7 @@ class FRU1:
 
 class Camera(MiniCamKRT):
     def __init__(self, colmap_id, K, R, T, image, image_name, uid, trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device="cuda",
-                 gt_alpha_mask=None, sky_mask=None):
+                 gt_alpha_mask=None, sky_mask=None, normal=None, depth=None):
 
         image_width = image.shape[2]
         image_height = image.shape[1]
@@ -297,12 +297,16 @@ class Camera(MiniCamKRT):
 
         self.colmap_id = colmap_id
         self.sky_mask = sky_mask
+        self.normal = normal
+        self.depth = depth
 
         self.original_image = image.clamp(0.0, 1.0).to(torch.float32).to(self.data_device)
 
     def updateImage(self, image,
                     gt_alpha_mask=None,
-                    sky_mask=None):
+                    sky_mask=None,
+                    normal=None,
+                    depth=None):
 
         new_image_width = image.shape[2]
         new_image_height = image.shape[1]
@@ -322,6 +326,8 @@ class Camera(MiniCamKRT):
         self.original_image = image.clamp(0.0, 1.0).to(torch.float32).to(self.data_device)
         self.mask = gt_alpha_mask
         self.sky_mask = sky_mask
+        self.normal = normal
+        self.depth = depth
 
         # Recalculate derived attributes based on updated K matrix and image dimensions
         self.init_derived()
