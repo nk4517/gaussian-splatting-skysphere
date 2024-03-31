@@ -9,18 +9,30 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+import math
+from math import ceil, floor
+
 from scene.cameras import Camera
 import numpy as np
 from utils.general_utils import PILtoTorch
 from utils.graphics_utils import fov2focal
+import cv2
+import torch
 
 WARNED = False
+
+
+def rescale_K(K: np.ndarray, scale):
+    K = np.copy(K) / scale
+    K[2, 2] = 1
+    return K
+
 
 def loadCam(args, id, cam_info, resolution_scale):
     orig_w, orig_h = cam_info.image.size
 
     if args.resolution in [1, 2, 4, 8]:
-        resolution = round(orig_w/(resolution_scale * args.resolution)), round(orig_h/(resolution_scale * args.resolution))
+        scale = resolution_scale * args.resolution
     else:  # should be a type that converts to float
         if args.resolution == -1:
             if orig_w > 1600:
@@ -36,20 +48,46 @@ def loadCam(args, id, cam_info, resolution_scale):
             global_down = orig_w / args.resolution
 
         scale = float(global_down) * float(resolution_scale)
-        resolution = (int(orig_w / scale), int(orig_h / scale))
+
+    if scale != 1:
+        resolution = (floor(orig_w / scale), floor(orig_h / scale))
+        K = rescale_K(cam_info.K, scale)
+    else:
+        resolution = (orig_w, orig_h)
+        K = cam_info.K
+
 
     resized_image_rgb = PILtoTorch(cam_info.image, resolution)
+    if cam_info.sky_mask is not None:
+        if scale != 1:
+            resized_mask_npy = cv2.resize(cam_info.sky_mask.astype(np.uint8), resolution, interpolation=cv2.INTER_NEAREST).astype(np.bool_)
+        else:
+            resized_mask_npy = cam_info.sky_mask
+        resized_sky_mask = torch.tensor(resized_mask_npy).to(resized_image_rgb.device)
+    else:
+        resized_sky_mask = None
+
+    if cam_info.gt_mask is not None:
+        if scale != 1:
+            resized_mask_npy = cv2.resize(cam_info.gt_mask.astype(np.float32), resolution, interpolation=cv2.INTER_NEAREST).astype(np.bool_)
+        else:
+            resized_mask_npy = cam_info.gt_mask
+        resized_gt_mask = torch.tensor(resized_mask_npy).float().to(resized_image_rgb.device)[None, ...]
+    else:
+        resized_gt_mask = None
+
+
 
     gt_image = resized_image_rgb[:3, ...]
-    loaded_mask = None
 
-    if resized_image_rgb.shape[1] == 4:
+    if resized_image_rgb.shape[0] == 4:
         loaded_mask = resized_image_rgb[3:4, ...]
+    else:
+        loaded_mask = resized_gt_mask
 
-    return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
-                  FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
-                  image=gt_image, gt_alpha_mask=loaded_mask,
-                  image_name=cam_info.image_name, uid=id, data_device=args.data_device)
+    return Camera(colmap_id=cam_info.uid, K=K, R=cam_info.R, T=cam_info.T,
+                  image=gt_image, image_name=cam_info.image_name, uid=id, data_device=args.data_device,
+                  gt_alpha_mask=loaded_mask, sky_mask=resized_sky_mask, normal=resized_normal, depth=resized_depth)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []
@@ -59,7 +97,7 @@ def cameraList_from_camInfos(cam_infos, resolution_scale, args):
 
     return camera_list
 
-def camera_to_JSON(id, camera : Camera):
+def camera_to_JSON(id, camera : 'CameraInfo'):
     Rt = np.zeros((4, 4))
     Rt[:3, :3] = camera.R.transpose()
     Rt[:3, 3] = camera.T
@@ -76,7 +114,10 @@ def camera_to_JSON(id, camera : Camera):
         'height' : camera.height,
         'position': pos.tolist(),
         'rotation': serializable_array_2d,
-        'fy' : fov2focal(camera.FovY, camera.height),
-        'fx' : fov2focal(camera.FovX, camera.width)
+        'fx': float(camera.K[0, 0]),
+        'fy': float(camera.K[1, 1]),
+        'cx': float(camera.K[0, 2]),
+        'cy': float(camera.K[1, 2]),
     }
     return camera_entry
+

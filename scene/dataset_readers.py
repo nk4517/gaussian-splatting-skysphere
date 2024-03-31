@@ -12,7 +12,8 @@
 import os
 import sys
 from PIL import Image
-from typing import NamedTuple
+from typing import NamedTuple, List, Optional
+
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
     read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
 from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
@@ -25,11 +26,10 @@ from scene.gaussian_model import BasicPointCloud
 
 class CameraInfo(NamedTuple):
     uid: int
-    R: np.array
-    T: np.array
-    FovY: np.array
-    FovX: np.array
-    image: np.array
+    K: np.ndarray
+    R: np.ndarray
+    T: np.ndarray
+    image: Image.Image
     image_path: str
     image_name: str
     width: int
@@ -75,6 +75,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
 
         extr = cam_extrinsics[key]
         intr = cam_intrinsics[extr.camera_id]
+
         height = intr.height
         width = intr.width
 
@@ -98,7 +99,14 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path)
 
-        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+        fx_orig, fy_orig, cx_orig, cy_orig = intr.params
+        K = np.array([
+            [fx_orig, 0, cx_orig],
+            [0, fy_orig, cy_orig],
+            [0, 0, 1],
+        ])
+
+        cam_info = CameraInfo(uid=uid, K=K, R=R, T=T, width=width, height=height, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
@@ -212,7 +220,11 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
             image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
 
-            fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
+            w = image.size[1]
+            h = image.size[0]
+            f = fov2focal(fovx, h)
+
+            fovy = focal2fov(f, w)
             FovY = fovy 
             FovX = fovx
 
