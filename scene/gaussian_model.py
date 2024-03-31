@@ -253,17 +253,24 @@ class GaussianModel:
         l.append('skysphere')
         return l
 
-    def save_ply(self, path):
+    def save_ply(self, path, save_sky=None):
         mkdir_p(os.path.dirname(path))
 
-        xyz = self._xyz.detach().cpu().numpy()
+        if save_sky is True:
+            mask = (self.get_skysphere > 0.5).squeeze()
+        elif save_sky is False:
+            mask = (self.get_skysphere <= 0.5).squeeze()
+        else:
+            mask = torch.ones_like(self._skysphere, dtype=torch.bool).squeeze()
+
+        xyz = self._xyz.detach()[mask].cpu().numpy()
         normals = np.zeros_like(xyz)
-        f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        opacities = self._opacity.detach().cpu().numpy()
-        scale = self._scaling.detach().cpu().numpy()
-        rotation = self._rotation.detach().cpu().numpy()
-        skysphere = self._skysphere.detach().cpu().numpy()
+        f_dc = self._features_dc.detach()[mask].transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        f_rest = self._features_rest.detach()[mask].transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        opacities = self._opacity.detach()[mask].cpu().numpy()
+        scale = self._scaling.detach()[mask].cpu().numpy()
+        rotation = self._rotation.detach()[mask].cpu().numpy()
+        skysphere = self._skysphere.detach()[mask].cpu().numpy()
 
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
