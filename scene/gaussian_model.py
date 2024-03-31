@@ -274,8 +274,20 @@ class GaussianModel:
         PlyData([el]).write(path)
 
     def reset_opacity(self):
-        opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
-        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
+
+        print("reset_opacity")
+        # небо не трогаем, оно очень далеко и однотонное, не успеет обновиться до следующего prune
+        sky_mask = (self.get_skysphere.detach() > 0.75).squeeze()
+
+        opacities_old = self.get_opacity.detach()
+        opacities_new = opacities_old.clone()
+
+        opacities_new[opacities_new > 0.01] = 0.01
+        opacities_new[sky_mask] = opacities_old[sky_mask]
+
+        opacities_new_p = self.inverse_opacity_activation(opacities_new)
+        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new_p,"opacity")
+
         self._opacity = optimizable_tensors["opacity"]
 
     def load_ply(self, path):
@@ -465,7 +477,7 @@ class GaussianModel:
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_skysphere)
 
-    def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size, kl_threshold=None):
+    def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size, kl_threshold=None, skysphere_radius=300):
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
 
@@ -475,10 +487,28 @@ class GaussianModel:
             self.kl_merge(grads, max_grad, extent, kl_threshold=kl_threshold/4)
 
         prune_mask = (self.get_opacity < min_opacity).squeeze()
+        print(f"prune by opacity: {torch.count_nonzero(prune_mask)} / {prune_mask.shape[0]}")
+
+        # а ещё грохнуть небо, слишком отклоняющееся от сферы и слишком далёкую землю
+        sertain_world_mask = (self.get_skysphere.detach() < 0.25).squeeze()
+        sertain_sky_mask = (self.get_skysphere.detach() > 0.75).squeeze()
+        sky_dist = torch.norm(self.get_xyz[sertain_sky_mask].detach(), dim=1).squeeze()
+        bad_sky = (sky_dist < skysphere_radius * 0.9) | (sky_dist > skysphere_radius * 1.1)
+        xyz_world = self.get_xyz[sertain_world_mask].detach()
+        bad_world_dist = torch.norm(xyz_world, dim=1).squeeze() >= skysphere_radius / 3
+        print(f"bad skysphere distance: {torch.count_nonzero(bad_sky)} sky, {torch.count_nonzero(bad_world_dist)} world")
+        prune_mask[sertain_sky_mask] |= bad_sky
+        prune_mask[sertain_world_mask] |= bad_world_dist
+
         if max_screen_size:
+            max_extent = torch.full_like(self._scaling[:, 0], fill_value=0.1 * extent)
+            # небо далеко, и пиксели там большие.
+            # и не сразу становится понятно - небо там, или как
+            max_extent[~sertain_world_mask] *= 100
+
             big_points_vs = self.max_radii2D > max_screen_size
-            big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
-            prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
+            big_points_ws = self.get_scaling.max(dim=1).values > max_extent
+            prune_mask |= big_points_vs | big_points_ws
         self.prune_points(prune_mask)
 
         torch.cuda.empty_cache()
