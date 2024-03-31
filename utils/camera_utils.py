@@ -131,3 +131,22 @@ def camera_to_JSON(id, camera : 'CameraInfo'):
     }
     return camera_entry
 
+
+def depth_to_points3d(depth: torch.Tensor, viewpoint_cam: 'Camera'):
+    K = viewpoint_cam.K
+    cam2world = viewpoint_cam.world_view_transform.transpose(0, 1).inverse()
+    h, w = depth.shape
+
+    # Create a grid of 2D pixel coordinates
+    y, x = torch.meshgrid(torch.arange(0, h), torch.arange(0, w))
+
+    # Stack the 2D and depth coordinates to create 3D homogeneous coordinates
+    coordinates = torch.stack([x.to(depth.device), y.to(depth.device), torch.ones_like(depth)], dim=-1)
+    coordinates = coordinates.view(-1, 3).to(K.device).to(torch.float32)
+    coordinates_3D = (K.inverse() @ coordinates.T).T
+    coordinates_3D *= depth.view(-1, 1)
+    world_coordinates_3D = (cam2world[:3, :3] @ coordinates_3D.T).T + cam2world[:3, 3]
+
+    world_coordinates_3D = world_coordinates_3D.view(h, w, 3)
+    return world_coordinates_3D
+
