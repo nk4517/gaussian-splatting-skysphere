@@ -82,6 +82,7 @@ class OptimizationParams(ParamGroup):
         self.opacity_lr = 0.05
         self.scaling_lr = 0.005
         self.rotation_lr = 0.001
+        self.skysphere_lr = 0.01
         self.percent_dense = 0.01
         self.normal_loss = False
         self.sparse_loss = False
