@@ -37,6 +37,7 @@ if not args.skip_matching:
         --image_path " + args.source_path + "/input \
         --ImageReader.single_camera 1 \
         --ImageReader.camera_model " + args.camera + " \
+        --ImageReader.mask_path " + args.source_path + "/mask" + " \
         --SiftExtraction.use_gpu " + str(use_gpu)
     exit_code = os.system(feat_extracton_cmd)
     if exit_code != 0:

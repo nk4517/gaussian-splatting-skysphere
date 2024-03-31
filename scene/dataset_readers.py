@@ -34,6 +34,7 @@ class CameraInfo(NamedTuple):
     image_name: str
     width: int
     height: int
+    sky_mask: Optional[np.ndarray] = None
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -65,7 +66,7 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sky_seg=False):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -106,8 +107,16 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
             [0, 0, 1],
         ])
 
+
+        # #sky mask
+        if sky_seg:
+            sky_path = image_path.replace("images", "mask")[:-4]+".npy"
+            sky_mask = np.load(sky_path).astype(np.uint8)
+        else:
+            sky_mask = None
+            
         cam_info = CameraInfo(uid=uid, K=K, R=R, T=T, width=width, height=height, image=image,
-                              image_path=image_path, image_name=image_name, width=width, height=height)
+                              image_path=image_path, image_name=image_name, width=width, height=height, sky_mask=sky_mask)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
@@ -140,7 +149,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8):
+def readColmapSceneInfo(path, images, eval, llffhold=8, sky_seg=False):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -153,7 +162,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
     reading_dir = "images" if images == None else images
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
+    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir), sky_seg=sky_seg)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:
@@ -220,6 +229,8 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
             image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
 
+            sky_mask = np.ones_like(image)[:, :, 0].astype(np.uint8)
+
             w = image.size[1]
             h = image.size[0]
             f = fov2focal(fovx, h)
@@ -229,7 +240,8 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             FovX = fovx
 
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
+                                        image_path=image_path, image_name=image_name, width=w, height=h,
+                                        intrinsics=np.array([f, f, w/2, h/2]), sky_mask=sky_mask, normal=normal, depth=None))
             
     return cam_infos
 
