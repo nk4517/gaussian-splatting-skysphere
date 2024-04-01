@@ -430,8 +430,9 @@ def training(conf: GaussianSplattingConf, debug_from,
 
                     torch.cuda.empty_cache()
 
-                if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                if opt.opacity_reset_interval != -1 and (iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter)):
                     gaussians.reset_opacity()
+                    opacity_was_reset_at_iter = iteration
 
                 N_full_stacks_processed = N_full_stacks_done
 
