@@ -12,19 +12,19 @@
 import os
 import sys
 from PIL import Image
-from typing import NamedTuple, List, Optional, Tuple
+from typing import NamedTuple, List, Optional
 
 import cv2
 
-from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
+from loaders.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
     read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
-from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal, getWorld2View_npy
+from utils.graphics_utils import focal2fov, fov2focal, getWorld2View_npy
 import numpy as np
 import json
 from pathlib import Path
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
-from scene.gaussian_model import BasicPointCloud
+from utils.graphics_utils import BasicPointCloud
 
 
 class CameraInfo(NamedTuple):

@@ -4,7 +4,7 @@ from PIL import Image
 import cv2
 import numpy as np
 
-from scene.dataset_readers import CameraInfo, getNerfppNorm, SceneInfo
+from loaders.dataset_readers import CameraInfo, getNerfppNorm, SceneInfo
 from utils.graphics_utils import BasicPointCloud
 
 
@@ -30,8 +30,6 @@ def readDREAMER(path: str | Path, eval, llffhold=8, load_skymask=False, N_random
     train_cam_infos = []
     test_cam_infos = []
     all_points = []
-
-    from utils.pcpr_utils import PCPRRenderer
 
     ids_to_load = [0,]
     ids_loaded = set()

@@ -6,7 +6,7 @@ import numpy as np
 import open3d
 import torch
 
-from scene.dataset_readers import CameraInfo, fetchPly, getNerfppNorm, SceneInfo
+from loaders.dataset_readers import CameraInfo, fetchPly, getNerfppNorm, SceneInfo
 from utils.graphics_utils import focal2fov, BasicPointCloud
 from utils.waymo_utils import WaymoCoordsHelper
 

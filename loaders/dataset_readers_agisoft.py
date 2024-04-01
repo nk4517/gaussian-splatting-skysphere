@@ -6,9 +6,8 @@ import cv2
 import numpy as np
 import open3d
 from plyfile import PlyData
-import torch
 
-from scene.dataset_readers import CameraInfo, getNerfppNorm, SceneInfo
+from loaders.dataset_readers import CameraInfo, getNerfppNorm, SceneInfo
 from utils.graphics_utils import BasicPointCloud
 
 
@@ -185,8 +184,7 @@ def readAgisoftExportInfo(path: str | Path, eval, llffhold=8, load_skymask=False
 
 
 def read_agisoft_xml(p):
-    from lxml import objectify
-    import lxml
+    import lxml.etree
 
     tree = lxml.etree.parse(p)
 
