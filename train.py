@@ -33,7 +33,7 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
-def training(dataset, opt: OptimizationParams, pipe: PipelineParams,
+def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams,
              testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from,
              network_gui: Optional[NetworkGUI]):
 

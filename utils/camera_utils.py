@@ -11,9 +11,14 @@
 
 import math
 from math import ceil, floor
+import typing
 
 from scene.cameras import Camera
 import numpy as np
+
+if typing.TYPE_CHECKING:
+    from scene.dataset_readers import CameraInfo
+
 from utils.general_utils import PILtoTorch
 from utils.graphics_utils import fov2focal
 import cv2
@@ -28,7 +33,7 @@ def rescale_K(K: np.ndarray, scale):
     return K
 
 
-def loadCam(args, id, cam_info, resolution_scale):
+def loadCam(args, id, cam_info: 'CameraInfo', resolution_scale):
     orig_w, orig_h = cam_info.image.size
 
     if args.resolution in [1, 2, 4, 8]:
@@ -99,7 +104,7 @@ def loadCam(args, id, cam_info, resolution_scale):
                   image=gt_image, image_name=cam_info.image_name, uid=id, data_device=args.data_device,
                   gt_alpha_mask=loaded_mask, sky_mask=resized_sky_mask, normal=resized_normal, depth=resized_depth)
 
-def cameraList_from_camInfos(cam_infos, resolution_scale, args):
+def cameraList_from_camInfos(cam_infos: list['CameraInfo'], resolution_scale, args):
     camera_list = []
 
     for id, c in enumerate(cam_infos):

@@ -16,11 +16,11 @@ from typing import NamedTuple, Tuple, Any
 
 
 class BasicPointCloud(NamedTuple):
-    points : np.array
-    colors : np.array
-    normals : np.array
+    points : np.ndarray
+    colors : np.ndarray
+    normals : np.ndarray
 
-def geom_transform_points(points, transf_matrix):
+def geom_transform_points(points, transf_matrix) -> torch.Tensor:
     P, _ = points.shape
     ones = torch.ones(P, 1, dtype=points.dtype, device=points.device)
     points_hom = torch.cat([points, ones], dim=1)
