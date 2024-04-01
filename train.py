@@ -127,6 +127,10 @@ def training(conf: GaussianSplattingConf, debug_from,
                             return_skyness=dataset.load_skymask and not c2f_phase, kernel_size=kernel_size)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
+        skyness = render_pkg.get("rendered_skyness")
+        alpha_img = render_pkg.get("rendered_alpha")
+
+
         # # opacity mask
         # if False: # iteration < opt.propagated_iteration_begin and opt.depth_loss:
         #     opacity_mask = render_pkg['rendered_alpha'] > 0.999
@@ -137,90 +141,118 @@ def training(conf: GaussianSplattingConf, debug_from,
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
-
-        # Ll1 = l1_loss(image[opacity_mask], gt_image[opacity_mask])
-        # loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image, mask=opacity_mask))
-
-        Ll1 = l1_loss(image, gt_image)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-
-        if viewpoint_cam.sky_mask is not None:
-            sky_select = (~(viewpoint_cam.sky_mask.to(torch.bool))).cuda()
+        if (opt.masked_image or opt.silhouette_loss) and viewpoint_cam.mask is not None:
+            gt_mask = viewpoint_cam.mask.squeeze().cuda()
+            gt_mask_bool = viewpoint_cam.mask.bool().squeeze().cuda()
         else:
-            sky_select = None
+            gt_mask = None
+            gt_mask_bool = None
 
-        if opt.skysphere_loss and sky_select is not None and not c2f_phase:
-            skymask_prob = sky_select.to(torch.float32).clamp(0, 1).clamp(1e-6, 1 - 1e-6)
-            rendered_skyness_prob = render_pkg["rendered_skyness"].reshape(sky_select.shape).clamp(1e-6, 1 - 1e-6)
+        if c2f_phase or not opt.silhouette_loss:
+            if opt.masked_image and gt_mask_bool is not None:
+                Ll1 = l1_loss(image[:, gt_mask_bool], gt_image[:, gt_mask_bool])
+            else:
+                Ll1 = l1_loss(image, gt_image)
 
-            splats_skyness_prob = gaussians.get_skysphere.squeeze().clamp(1e-6, 1 - 1e-6)
+            loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image, mask=gt_mask_bool))
 
-            skysphere_mask_loss = binary_cross_entropy(rendered_skyness_prob, skymask_prob)
+        if not c2f_phase:
+            if opt.silhouette_loss:
 
-            # real_xyz_world_dist = torch.norm(gaussians.get_xyz, dim=1)
-            # splats_dist_gt_100 = (real_xyz_world_dist > 100).squeeze().to(torch.float32).clamp(0, 1).clamp(1e-6, 1 - 1e-6)
+                gt_mask_object = (gt_mask > 0.5).repeat(3, 1, 1)
+
+                masked_gt = gt_image * gt_mask + bg[:, None, None] * (1 - gt_mask).squeeze()
+
+                Ll1 = l1_loss(image[gt_mask_object], masked_gt[gt_mask_object])
+                loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, masked_gt))
+
+                if opt.silhouette_loss_type == "bce":
+                    silhouette_loss = F.binary_cross_entropy(alpha_img, gt_mask)
+                elif opt.silhouette_loss_type == "mse":
+                    silhouette_loss = F.mse_loss(alpha_img, gt_mask)
+                else:
+                    raise NotImplementedError
+                loss += opt.lambda_silhouette * silhouette_loss
+                # if tb_writer is not None:
+                #     tb_writer.add_scalar('loss/silhouette_loss', silhouette_loss, iteration)
+
+            if viewpoint_cam.sky_mask is not None:
+                sky_select = (~(viewpoint_cam.sky_mask.to(torch.bool))).cuda()
+            else:
+                sky_select = None
+
+            if opt.skysphere_loss and sky_select is not None:
+                skymask_prob = sky_select.to(torch.float32).clamp(0, 1).clamp(1e-6, 1 - 1e-6)
+                rendered_skyness_prob = skyness.clamp(1e-6, 1 - 1e-6)
+
+                splats_skyness_prob = gaussians.get_skysphere.squeeze().clamp(1e-6, 1 - 1e-6)
+
+                skysphere_mask_loss = binary_cross_entropy(rendered_skyness_prob, skymask_prob)
+
+                # real_xyz_world_dist = torch.norm(gaussians.get_xyz, dim=1)
+                # splats_dist_gt_100 = (real_xyz_world_dist > 100).squeeze().to(torch.float32).clamp(0, 1).clamp(1e-6, 1 - 1e-6)
+                #
+                # skysphere_by_distance_loss = binary_cross_entropy(
+                #     splats_skyness_prob,
+                #     splats_dist_gt_100
+                # )
+
+                # minimization of crossentropy with itself = entropy minimization
+                skysphere_entropy_loss = binary_cross_entropy(splats_skyness_prob, splats_skyness_prob)
+
+
+                loss += (opt.lambda_skysphere_mask * skysphere_mask_loss
+                         # + opt.lambda_skysphere_dist * skysphere_by_distance_loss
+                         + opt.lambda_skysphere_entropy * skysphere_entropy_loss)
+
+
+            if opt.skysphere_loss and opt.sky_depth_loss:
+                update_loss_from_skydepth(gaussians, opt, loss)
+
+            # if opt.sky_depth_loss:
+            #     pass
             #
-            # skysphere_by_distance_loss = binary_cross_entropy(
-            #     splats_skyness_prob,
-            #     splats_dist_gt_100
-            # )
-
-            # minimization of crossentropy with itself = entropy minimization
-            skysphere_entropy_loss = binary_cross_entropy(splats_skyness_prob, splats_skyness_prob)
-
-
-            loss += (opt.lambda_skysphere_mask * skysphere_mask_loss
-                     # + opt.lambda_skysphere_dist * skysphere_by_distance_loss
-                     + opt.lambda_skysphere_entropy * skysphere_entropy_loss)
-
-
-        if opt.skysphere_loss and opt.sky_depth_loss and not c2f_phase:
-            update_loss_from_skydepth(gaussians, opt, loss)
-
-        # if opt.sky_depth_loss:
-        #     pass
-        #
-            # rendered_depth_sky = render_pkg['rendered_depth'].reshape(viewpoint_cam.sky_sphere_depthmap.shape)[sky_select]
-            # rendered_alpha_sky = render_pkg['rendered_alpha'].reshape(viewpoint_cam.sky_sphere_depthmap.shape)[sky_select]
-            # if sky_select is not None and viewpoint_cam.sky_sphere_depthmap is not None:
-            #     dmap_rendered = rendered_depth_sky
-            #     dmap_ideal = viewpoint_cam.sky_sphere_depthmap[sky_select].cuda()
-            #     sky_depth_diff = torch.abs(torch.log(torch.clamp(dmap_rendered, 1)) - torch.log(torch.clamp(dmap_ideal, 1)))
-            #     # ещё и на alpha завязать, чтобы оно пыталось "выключать" косячные пиксели через прозрачность,
-            #     # и их потом prune зачистит
-            #     # чем меньше прозрачность, тем меньше потеря
-            #     sky_depth_diff *= torch.clamp(rendered_alpha_sky, 0, 1)
-            #
-            #     good_diff = sky_depth_diff > 1e-6
-            #     l1_sky_depth = torch.clamp(sky_depth_diff[good_diff], 0, 1e10).mean()
-            #
-            #
-            #     loss += opt.lambda_sky_depth * l1_sky_depth
+                # rendered_depth_sky = render_pkg['rendered_depth'].reshape(viewpoint_cam.sky_sphere_depthmap.shape)[sky_select]
+                # rendered_alpha_sky = render_pkg['rendered_alpha'].reshape(viewpoint_cam.sky_sphere_depthmap.shape)[sky_select]
+                # if sky_select is not None and viewpoint_cam.sky_sphere_depthmap is not None:
+                #     dmap_rendered = rendered_depth_sky
+                #     dmap_ideal = viewpoint_cam.sky_sphere_depthmap[sky_select].cuda()
+                #     sky_depth_diff = torch.abs(torch.log(torch.clamp(dmap_rendered, 1)) - torch.log(torch.clamp(dmap_ideal, 1)))
+                #     # ещё и на alpha завязать, чтобы оно пыталось "выключать" косячные пиксели через прозрачность,
+                #     # и их потом prune зачистит
+                #     # чем меньше прозрачность, тем меньше потеря
+                #     sky_depth_diff *= torch.clamp(rendered_alpha_sky, 0, 1)
+                #
+                #     good_diff = sky_depth_diff > 1e-6
+                #     l1_sky_depth = torch.clamp(sky_depth_diff[good_diff], 0, 1e10).mean()
+                #
+                #
+                #     loss += opt.lambda_sky_depth * l1_sky_depth
 
 
-        update_loss_from_splat_shape(gaussians, opt, loss)
+            update_loss_from_splat_shape(gaussians, opt, loss)
 
-        if opt.semitransparent_loss and not c2f_phase:
-            # полупрозрачные сплаты по возможности сделать или полностью прозрачными, или полностью непрозрачными
-            # (а потом удалить полностью прозрачные в prune)
-            # хорошо подходит для мелких объектов, но очень так-себе для уличных сцен с большой глубиной
+            if opt.semitransparent_loss and opt.semitransparent_from_iter <=  iteration < opt.semitransparent_until_iter:
+                # полупрозрачные сплаты по возможности сделать или полностью прозрачными, или полностью непрозрачными
+                # (а потом удалить полностью прозрачные в prune)
+                # хорошо подходит для мелких объектов, но очень так-себе для уличных сцен с большой глубиной
 
-            opacity = gaussians.get_opacity.clamp(1e-6, 1-1e-6)
-            # minimization of crossentropy with itself = entropy minimization
-            semitransparent_loss = binary_cross_entropy(opacity, opacity)
-            loss += opt.lambda_semitransparent * semitransparent_loss
+                opacity = gaussians.get_opacity.clamp(1e-6, 1-1e-6)
+                # minimization of crossentropy with itself = entropy minimization
+                semitransparent_loss = binary_cross_entropy(opacity, opacity)
+                loss += opt.lambda_semitransparent * semitransparent_loss
 
-        if opt.normal_loss and not c2f_phase:
-            rendered_normal = render_pkg['rendered_normal']
-            if viewpoint_cam.normal is not None:
-                normal_gt = viewpoint_cam.normal.cuda()
-                if viewpoint_cam.sky_mask is not None:
-                    filter_mask = viewpoint_cam.sky_mask.to(normal_gt.device).to(torch.bool)
-                    normal_gt[~(filter_mask.unsqueeze(0).repeat(3, 1, 1))] = -10
-                filter_mask = (normal_gt != -10)[0, :, :].to(torch.bool)
-                l1_normal = torch.abs(rendered_normal - normal_gt).sum(dim=0)[filter_mask].mean()
-                cos_normal = (1. - torch.sum(rendered_normal * normal_gt, dim = 0))[filter_mask].mean()
-                loss += opt.lambda_l1_normal * l1_normal + opt.lambda_cos_normal * cos_normal
+            if opt.normal_loss:
+                rendered_normal = render_pkg['rendered_normal']
+                if viewpoint_cam.normal is not None:
+                    normal_gt = viewpoint_cam.normal.cuda()
+                    if viewpoint_cam.sky_mask is not None:
+                        filter_mask = viewpoint_cam.sky_mask.to(normal_gt.device).to(torch.bool)
+                        normal_gt[~(filter_mask.unsqueeze(0).repeat(3, 1, 1))] = -10
+                    filter_mask = (normal_gt != -10)[0, :, :].to(torch.bool)
+                    l1_normal = torch.abs(rendered_normal - normal_gt).sum(dim=0)[filter_mask].mean()
+                    cos_normal = (1. - torch.sum(rendered_normal * normal_gt, dim = 0))[filter_mask].mean()
+                    loss += opt.lambda_l1_normal * l1_normal + opt.lambda_cos_normal * cos_normal
 
         loss.backward()
         iter_end.record()

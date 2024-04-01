@@ -95,15 +95,16 @@ class OptimizationParams:
     depth_loss: bool = False
     depth2normal_loss: bool = False
 
-    semitransparent_loss: bool = False
-
     lambda_l1_normal: float = 0.01
     lambda_cos_normal: float = 0.01
 
     lambda_dssim: float = 0.2
     lambda_lpips: float = 0.2
 
-    lambda_semitransparent: float = 0.001
+    semitransparent_loss: bool = False
+    semitransparent_from_iter: int = 5_000
+    semitransparent_until_iter: int = 7_000
+    lambda_semitransparent: float = 0.0005
 
     # splat_shape: Optional[SplatShape] = None
     # skysphere: Optional[SkySphere] = None
