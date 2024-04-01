@@ -135,6 +135,13 @@ class OptimizationParams:
 
     masked_image: bool = False
 
+    fft_loss: bool = False
+    fft_lowpass_sigma_iter: int = 7000
+    fft_lowpass_sigma_initial: float = 0.4
+    fft_lowpass_sigma_max: float = 2.5
+    lambda_fft_ampl: float = .005
+    lambda_fft_phi: float = .001
+
     silhouette_loss: bool = False
     silhouette_loss_type: str = "bce" # : Literal["bce", "mce"]
     lambda_silhouette: float = 2.5

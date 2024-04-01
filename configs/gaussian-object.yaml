@@ -66,6 +66,14 @@ optimization_params:
   lambda_sky_depth: 0.001
   skysphere_radius_in_cam_extents: 100
 
+  # fft
+  fft_loss: false
+  fft_lowpass_sigma_iter: 7000
+  fft_lowpass_sigma_initial: 0.4
+  fft_lowpass_sigma_max: 2.5
+  lambda_fft_ampl: .00005
+  lambda_fft_phi: .000025
+
   densification_interval: 100
   opacity_reset_interval: 3000
   densify_from_iter: 500

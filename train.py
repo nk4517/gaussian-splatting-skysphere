@@ -20,10 +20,12 @@ from argparse import ArgumentParser, Namespace
 
 from omegaconf import OmegaConf
 import torch
+from torch.fft import fft2, fftshift
 import torch.nn.functional as F
 from tqdm import tqdm
 
 from scene.resolution_controller import ResolutionController
+from utils.fft_utils import gen_gaussian_ellipse_torch, calc_phase_dist
 from utils.loss_utils import l1_loss, ssim, binary_cross_entropy
 from gaussian_renderer import render
 from gaussian_renderer.network_gui import NetworkGUI
@@ -102,6 +104,13 @@ def training(conf: GaussianSplattingConf, debug_from,
 
     N_full_stacks_done = -1
     N_full_stacks_processed = 0
+
+    fft_lowpass_mask = None
+    fft_loss_mask = None
+    fft_loss_coeffs = None
+    fft_mask_sigma = None
+
+    fft_lowpass_sigma = opt.fft_lowpass_sigma_initial
 
     for iteration in range(first_iter, opt.iterations + 1):        
 
@@ -187,6 +196,33 @@ def training(conf: GaussianSplattingConf, debug_from,
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image, mask=gt_mask_bool))
 
         if not res_controller.c2f_phase:
+
+            if opt.fft_loss and fft_lowpass_sigma < opt.fft_lowpass_sigma_max:
+                if fft_lowpass_mask is None or gt_image.shape[1:] != fft_lowpass_mask.shape or fft_mask_sigma != fft_lowpass_sigma:
+                    fft_mask_sigma = fft_lowpass_sigma
+                    fft_lowpass_mask = fftshift(gen_gaussian_ellipse_torch(gt_image.shape[2], gt_image.shape[1], sigma=fft_lowpass_sigma).to(gt_image.device).repeat(1, 3, 1, 1))
+                    fft_loss_mask = (fft_lowpass_mask > 0.01)
+                    fft_loss_coeffs = fft_lowpass_mask[fft_loss_mask]
+
+                # if not hasattr(viewpoint_cam, "fft"):
+                #     viewpoint_cam.fft = fft2(gt_image.unsqueeze(0))
+                #
+                # fft_gt = viewpoint_cam.fft[fft_loss_mask]
+
+                fft_gt = fft2(gt_image.unsqueeze(0))[fft_loss_mask]
+                fft_rendered = fft2(image.unsqueeze(0))[fft_loss_mask]
+
+                ampl_gt = torch.abs(fft_gt)
+                ampl = torch.abs(fft_rendered)
+                ampl_loss = (torch.abs(ampl_gt - ampl) * fft_loss_coeffs).mean()
+
+                phi_dist = calc_phase_dist(fft_gt, fft_rendered)
+
+                phi_loss = (phi_dist * fft_loss_coeffs).mean()
+
+                loss += opt.lambda_fft_ampl * ampl_loss + opt.lambda_fft_phi * phi_loss
+
+
             if opt.silhouette_loss:
 
                 gt_mask_object = (gt_mask > 0.5).repeat(3, 1, 1)
@@ -316,18 +352,30 @@ def training(conf: GaussianSplattingConf, debug_from,
                     total_px=total_px
                 )
 
-                if iteration > opt.densify_from_iter and not c2f_phase and iteration % opt.densification_interval == 0:
-                    size_threshold = 20 if iteration > opt.opacity_reset_interval and not c2f_phase else None
+                if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
+                    if opt.fft_loss:
+                        d = iteration / opt.fft_lowpass_sigma_iter
+                        if d <= 1.2:
+                            fft_lowpass_sigma = opt.fft_lowpass_sigma_initial + d * (opt.fft_lowpass_sigma_max - opt.fft_lowpass_sigma_initial)
+                            print(f"fft_lowpass_sigma: {fft_lowpass_sigma:.4f}")
+
+                    res_scale = viewpoint_cam.image_width / 1920
+                    size_threshold = 20 * res_scale if iteration > opt.opacity_reset_interval and not c2f_phase else None
                     min_opacity = 0.05 if not c2f_phase else 0.01
+                    if regenerating_opacity:
+                        min_opacity = 0
+                    size_threshold = None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, min_opacity, scene.cameras_extent, size_threshold,
                                                 kl_threshold=opt.kl_threshold, skysphere_radius=opt.skysphere_radius)
 
                     gaussians.propagate_depth_sq_to_filter3D(res_controller.trainCameras_filter3d)
 
                     torch.cuda.empty_cache()
-                
+
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
+
+                N_full_stacks_processed = N_full_stacks_done
 
             if iteration % 500 == 0 and iteration > opt.densify_until_iter:
                 if iteration < opt.iterations - 500:
