@@ -10,7 +10,8 @@
 #
 
 import math
-import os, sys
+import os
+import threading
 from pathlib import Path
 from typing import Optional
 from random import randint
@@ -38,12 +39,13 @@ except ImportError:
     TENSORBOARD_FOUND = False
 
 def training(conf: GaussianSplattingConf, debug_from,
-             network_gui: Optional[NetworkGUI]):
+             network_gui: Optional[NetworkGUI], gui, scene_lock: threading.RLock):
 
     opt = conf.optimization_params
     dataset = conf.model_params
     pipe = conf.pipeline_params
     progress = conf.progress_params
+
 
     if opt.c2f:
         opt.divide_ratio = 0.7
@@ -90,7 +92,6 @@ def training(conf: GaussianSplattingConf, debug_from,
     iter_end = torch.cuda.Event(enable_timing = True)
 
 
-
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress", dynamic_ncols=True)
@@ -101,6 +102,7 @@ def training(conf: GaussianSplattingConf, debug_from,
         #     with torch.no_grad():
         #         network_gui.tick(opt, pipe, dataset, gaussians, iteration, background)
 
+        scene_lock.acquire()
 
         iter_start.record()
 
@@ -298,6 +300,8 @@ def training(conf: GaussianSplattingConf, debug_from,
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path / f"chkpnt{iteration}.pth")
 
+        scene_lock.release()
+
 
 def update_loss_from_splat_shape(gaussians: GaussianModel, opt: OptimizationParams, loss):
 
@@ -466,14 +470,25 @@ def main():
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
+    from tiny_renderer.minigui import SimpleGUI
+
+    scene_lock = threading.RLock()
+    gui = SimpleGUI(scene_lock)
+
+    t0 = threading.Thread(target=t0_fn, args=(gui,))
+    t0.start()
+
     # Start GUI server, configure and run training
     network_gui = NetworkGUI(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(conf, args.debug_from, network_gui)
+    training(conf, args.debug_from, network_gui, gui, scene_lock)
 
     # All done
     print("\nTraining complete.")
 
+
+def t0_fn(gui):
+    gui.run()
 
 if __name__ == "__main__":
     main()
