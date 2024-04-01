@@ -12,7 +12,9 @@
 import os
 import sys
 from PIL import Image
-from typing import NamedTuple, List, Optional
+from typing import NamedTuple, List, Optional, Tuple
+
+import cv2
 
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
     read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
@@ -362,5 +364,6 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
 
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
-    "Blender" : readNerfSyntheticInfo
+    "Blender" : readNerfSyntheticInfo,
+    # "WaymoExport": readWaymoExportInfo
 }
