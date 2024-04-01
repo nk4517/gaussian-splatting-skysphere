@@ -9,12 +9,15 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-import torch
 import sys
 from datetime import datetime
-import numpy as np
 import random
+
+import numpy as np
 from PIL.Image import Resampling
+import torch
+import torch.nn.functional as F
+
 
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
@@ -165,3 +168,59 @@ def kl_divergence(mu_0, rotation_0_q, scaling_0_diag, mu_1, rotation_1_q, scalin
     kl_div_2 = torch.log(torch.prod((scaling_1_diag/scaling_0_diag)**2, dim=1))
     kl_div = 0.5 * (kl_div_0 + kl_div_1 + kl_div_2 - 3)
     return kl_div
+
+
+@torch.jit.script
+def conv_gradient_center(input_tensor):
+    device = input_tensor.device
+
+    k1 = [[[
+        [0., 0., 0., 0., 0.],
+        [0., 0., 0., 0., 0.],
+        [-0.15, -0.35, 0., 0.35, 0.15],
+        [0., 0., 0., 0., 0.],
+        [0., 0., 0., 0., 0.]
+    ]]]
+
+    k2 = [[[
+        [0., 0., -0.15, 0., 0.],
+        [0., 0., -0.35, 0., 0.],
+        [0., 0., 0., 0., 0.],
+        [0., 0., 0.35, 0., 0.],
+        [0., 0., 0.15, 0., 0.]
+    ]]]
+
+    grad_x_kernel = torch.tensor(k1, device="cuda", dtype=torch.float32)
+
+    grad_y_kernel = torch.tensor(k2, device="cuda", dtype=torch.float32)
+
+    # Применяем kernels
+    grad_x = F.conv2d(input=input_tensor, weight=grad_x_kernel, padding=2)
+    grad_y = F.conv2d(input=input_tensor, weight=grad_y_kernel, padding=2)
+
+    return grad_x, grad_y
+
+    # mag = torch.sqrt(grad_x**2 + grad_y**2)
+    # angle = torch.atan2(grad_y, grad_x) / (2 * torch.pi) + 0.5
+    #
+    # return mag, angle
+
+
+@torch.jit.script
+def pseudo_normals_from_depthmap_gradient(depth_map):
+    # GW = torch.gradient(depth_map, spacing=0.1, dim=1)[0]
+    # GH = torch.gradient(depth_map, spacing=0.1, dim=0)[0]
+
+    GW, GH = conv_gradient_center(depth_map.unsqueeze(0).unsqueeze(0))
+    GW = GW.squeeze(0, 1)
+    GH = GH.squeeze(0, 1)
+
+    denominator = (GW.square() + GH.square() + 1).sqrt()
+
+    n_i = torch.stack([
+        GW / denominator,
+        GH / denominator,
+        1 / denominator
+    ], dim=0)
+
+    return n_i
