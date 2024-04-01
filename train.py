@@ -56,6 +56,9 @@ def training(conf: GaussianSplattingConf, debug_from,
 
     assert not (opt.skysphere_loss and opt.silhouette_loss)
 
+    if (opt.skysphere_loss or opt.sky_depth_loss) and not dataset.load_skymask:
+        raise "SKYMASK!!!"
+
     print(f"Set divide_ratio to {opt.divide_ratio}")
 
     first_iter = 0
@@ -67,6 +70,9 @@ def training(conf: GaussianSplattingConf, debug_from,
     if not progress.load_gaussians_path and progress.load_checkoint_path:
         (model_params, first_iter) = torch.load(progress.load_checkoint_path)
         gaussians.restore(model_params, opt)
+
+    if not opt.skysphere_radius > 0 and opt.skysphere_radius_in_cam_extents > 0:
+        opt.skysphere_radius = float(scene.cameras_extent * opt.skysphere_radius_in_cam_extents)
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
