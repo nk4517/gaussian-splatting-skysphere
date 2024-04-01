@@ -602,6 +602,8 @@ def training(conf: GaussianSplattingConf, debug_from,
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path / f"chkpnt{iteration}.pth")
 
+        iteration += 1
+
         scene.was_updated.set()
         scene.lock.release()
         # torch.cuda.synchronize()
