@@ -516,6 +516,15 @@ class BaseGaussianModel:
 
         self.prune_points(prune_mask)
 
+        split_too_big = True
+
+        if split_too_big:
+            mask = (self.statblock.max_screenPct > 0.001)
+            mask = stoch1(mask, 0.15)
+            if mask.any():
+                print(f"split_too_big: {mask.count_nonzero()}")
+                self.split_by_mask(mask)
+
         # s = float(self.n_touched.sum())
         denom = self.statblock.n_touched_accum
         grads = self.statblock.xyz_gradient_accum / denom
