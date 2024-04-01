@@ -365,28 +365,6 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
         torch.cuda.empty_cache()
 
 
-def get_points_depth_in_depth_map(depth, points_in_camera_space, camera):
-    # from SuGaR/sugar_scene/sugar_model.py
-    depth_view = depth.unsqueeze(0).unsqueeze(-1).permute(0, 3, 1, 2)
-    pts_projections = camera.get_projection_transform().transform_points(points_in_camera_space)
-
-    w = camera.image_width
-    h = camera.image_height
-
-    factor = -1 * min(h, w)
-    # todo: Parallelize these two lines with a tensor [image_width, image_height]
-    pts_projections[..., 0] = factor / w * pts_projections[..., 0]
-    pts_projections[..., 1] = factor / h * pts_projections[..., 1]
-    pts_projections = pts_projections[..., :2].view(1, -1, 1, 2)
-
-    map_z = torch.nn.functional.grid_sample(input=depth_view,
-                                            grid=pts_projections,
-                                            mode='bilinear',
-                                            padding_mode='border'  # 'reflection', 'zeros'
-                                            )[0, 0, :, 0]
-    return map_z
-
-
 def convert_camera_from_gs_to_pytorch3d(gs_cameras, device='cuda'):
     """
     From Gaussian Splatting camera parameters,
