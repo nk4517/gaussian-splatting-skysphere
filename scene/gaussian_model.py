@@ -284,7 +284,7 @@ class GaussianModel:
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
 
-    def reset_opacity(self):
+    def reset_opacity(self, drop_to=0.01):
 
         print("reset_opacity")
         # небо не трогаем, оно очень далеко и однотонное, не успеет обновиться до следующего prune
@@ -293,7 +293,7 @@ class GaussianModel:
         opacities_old = self.get_opacity.detach()
         opacities_new = opacities_old.clone()
 
-        opacities_new[opacities_new > 0.01] = 0.01
+        opacities_new[opacities_new > drop_to] = drop_to
         opacities_new[sky_mask] = opacities_old[sky_mask]
 
         opacities_new_p = self.inverse_opacity_activation(opacities_new)
