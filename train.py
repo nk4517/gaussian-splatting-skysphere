@@ -239,6 +239,16 @@ def training(conf: GaussianSplattingConf, debug_from,
         splat_depths = render_pkg["splat_depths"]
         total_px = viewpoint_cam.image_width * viewpoint_cam.image_height
 
+        if iteration > opt.densify_from_iter + 1 and splat_depths.shape[0]:
+            # если сплаты занимает больше 20% ширины\высоты экрана (а это дохрена) - это флоатеры
+            floaters = radii > min(viewpoint_cam.image_height, viewpoint_cam.image_width) * 0.3
+            if floaters.any():
+                gaussians.prune_points(floaters)
+                scene.lock.release()
+                scene.was_updated.set()
+                continue
+
+
         # # opacity mask
         # if False: # iteration < opt.propagated_iteration_begin and opt.depth_loss:
         #     opacity_mask = render_pkg['rendered_alpha'] > 0.999
