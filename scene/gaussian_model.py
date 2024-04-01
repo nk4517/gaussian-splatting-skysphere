@@ -51,8 +51,7 @@ class BaseGaussianModel:
         self.inverse_skysphere_activation = inverse_sigmoid
 
 
-    def __init__(self, sh_degree: int, divide_ratio: float = 0.8, cuda_bug_workaround = False):
-        self.CUDA_BUG_WORKAROUND = cuda_bug_workaround
+    def __init__(self, sh_degree: int, divide_ratio: float = 0.8):
         self.active_sh_degree = 0
         self.divide_ratio = divide_ratio
         self.max_sh_degree = sh_degree
