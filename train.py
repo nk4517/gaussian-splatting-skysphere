@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Optional
 from random import randint
 import uuid
-from argparse import ArgumentParser, Namespace
+from argparse import ArgumentParser
 
 from omegaconf import OmegaConf
 import torch
