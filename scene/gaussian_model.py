@@ -317,12 +317,17 @@ class GaussianModel:
 
         extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
         extra_f_names = sorted(extra_f_names, key = lambda x: int(x.split('_')[-1]))
-        assert len(extra_f_names)==3*(self.max_sh_degree + 1) ** 2 - 3
+
+        num_extra_f = len(extra_f_names)
+        assert num_extra_f % 3 == 0
+        sh_degree = int((((num_extra_f // 3) + 1) ** 0.5) - 1)
+        assert num_extra_f == 3 * (sh_degree + 1) ** 2 - 3
+
         features_extra = np.zeros((xyz.shape[0], len(extra_f_names)))
         for idx, attr_name in enumerate(extra_f_names):
             features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
         # Reshape (P,F*SH_coeffs) to (P, F, SH_coeffs except DC)
-        features_extra = features_extra.reshape((features_extra.shape[0], 3, (self.max_sh_degree + 1) ** 2 - 1))
+        features_extra = features_extra.reshape((features_extra.shape[0], 3, (sh_degree + 1) ** 2 - 1))
 
         scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
         scale_names = sorted(scale_names, key = lambda x: int(x.split('_')[-1]))
@@ -344,7 +349,8 @@ class GaussianModel:
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
         self._skysphere = nn.Parameter(torch.tensor(skysphere, dtype=torch.float, device="cuda").requires_grad_(True))
 
-        self.active_sh_degree = self.max_sh_degree
+        self.active_sh_degree = sh_degree
+
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
