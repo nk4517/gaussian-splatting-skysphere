@@ -132,6 +132,10 @@ def training(conf: GaussianSplattingConf, debug_from,
         skyness = render_pkg.get("rendered_skyness")
         alpha_img = render_pkg.get("rendered_alpha")
 
+        n_dominated = render_pkg["n_dominated"]
+        n_touched = render_pkg["n_touched"]
+        splat_depths = render_pkg["splat_depths"]
+        total_px = viewpoint_cam.image_width * viewpoint_cam.image_height
 
         # # opacity mask
         # if False: # iteration < opt.propagated_iteration_begin and opt.depth_loss:
@@ -280,8 +284,11 @@ def training(conf: GaussianSplattingConf, debug_from,
 
                 gaussians.statblock.add_densification_stats(
                     viewspace_point_tensor, visibility_filter,
-                    radii, render_pkg["n_touched"], render_pkg["splat_depths"],
-                    viewpoint_cam.focal_x)
+                    radii=radii, n_touched=n_touched, n_dominated=n_dominated,
+                    splat_depths=splat_depths,
+                    fx=viewpoint_cam.focal_x,
+                    total_px=total_px
+                )
 
                 if iteration > opt.densify_from_iter and not c2f_phase and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval and not c2f_phase else None
