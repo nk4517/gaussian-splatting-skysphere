@@ -3,14 +3,14 @@ import math
 import torch
 
 from scene import Scene, GaussianModel
-from scene.cameras import MiniCamKRT
+from scene.cameras import project_points_to_image
 
 
-def add_skysphere_points3d(scene: Scene, gaussians: GaussianModel, skysphere_radius: float):
+def add_skysphere_points3d(scene: Scene, gaussians: GaussianModel, skysphere_radius: float, full_skysphere_points: int = 50_000):
     cameras = scene.getTrainCameras()
     N_cameras = len(cameras)
 
-    skysphere_pts3d = fibonacci_sphere(samples=20000, radius=skysphere_radius).float().to("cuda")
+    skysphere_pts3d = fibonacci_sphere(samples=full_skysphere_points, radius=skysphere_radius).float().to("cuda")
 
     populated = torch.zeros(skysphere_pts3d.shape[0], dtype=torch.bool, device="cuda")
 
@@ -29,24 +29,28 @@ def add_skysphere_points3d(scene: Scene, gaussians: GaussianModel, skysphere_rad
             #     skysphere_radius=skysphere_radius
             # )
 
-            camera_coords, in_view = project_points_to_image(skysphere_pts3d, cam)
+            camera_2d, camera_3d, in_view = project_points_to_image(skysphere_pts3d, cam)
 
-            unpopulated = in_view & ~populated
-            unpopulated_pixel_coords = camera_coords[unpopulated]
-            un_y = unpopulated_pixel_coords[:, 1]
-            un_x = unpopulated_pixel_coords[:, 0]
+            # in_view_fru = cam.points_inside_frustrum(skysphere_pts3d)
+
+            visible_unpopulated = in_view & ~populated
+            visible_unpopulated_xy = camera_2d[visible_unpopulated]
+            un_y = visible_unpopulated_xy[:, 1]
+            un_x = visible_unpopulated_xy[:, 0]
 
             sky_ok = ~cam.sky_mask.cuda().to(torch.bool)
 
-            unpopulated_seen_by_cur_cam = sky_ok[un_y, un_x]
-            populated[unpopulated] = unpopulated_seen_by_cur_cam
+            visible_unpopulated_confirmed_sky = sky_ok[un_y, un_x]
+            populated[visible_unpopulated] = visible_unpopulated_confirmed_sky
 
-            skymask_to_propagate = torch.zeros_like(sky_ok)
-            skymask_to_propagate[un_y, un_x] = 1
-            skymask_to_propagate &= sky_ok
+            un2add = torch.zeros_like(visible_unpopulated)
+            un2add[visible_unpopulated] = visible_unpopulated_confirmed_sky
 
-            sky_depthmap = torch.zeros((cam.image_height, cam.image_width), dtype=torch.float32, device=cam.data_device)
-            sky_depthmap[un_y, un_x] = torch.norm(skysphere_pts3d[unpopulated] - cam.camera_center, dim=1)
+            un2add_y = un_y[visible_unpopulated_confirmed_sky]
+            un2add_x = un_x[visible_unpopulated_confirmed_sky]
+
+            pts3d_to_add = skysphere_pts3d[un2add]
+            colors_to_add = cam.original_image[:, un2add_y, un2add_x].permute(1, 0)
 
             # turbo_img(f"sky_fib_{cam.uid:04d}.png", skymask_to_propagate.cpu().numpy(), norm_min=0, norm_max=1)
 
