@@ -256,6 +256,7 @@ class CUDARenderer(GaussianRenderBase):
         # self.update_vsync()
 
         self._scale_modifier = 1.0
+        self._blur_modifier = 1.0
 
 
 
@@ -266,6 +267,10 @@ class CUDARenderer(GaussianRenderBase):
     def set_scale_modifier(self, modifier):
         self.need_rerender = True
         self._scale_modifier = float(modifier)
+
+    def set_blur_modifier(self, modifier):
+        self.need_rerender = True
+        self._blur_modifier = float(modifier)
 
 
     def set_render_mode(self, mod: int):
@@ -357,7 +362,8 @@ class CUDARenderer(GaussianRenderBase):
             override_colors[..., 1] = (skyness.squeeze(1) - 0.5).abs()
             override_colors[..., 2] = skyness.squeeze(1)
 
-        color, radii, depth, alpha, n_touched, splat_depths, n_dominated, dominating_splat = self.render111(scene, viewpoint_camera, override_colors=override_colors)
+        color, radii, depth, alpha, n_touched, splat_depths, n_dominated, dominating_splat = self.render111(
+            scene, viewpoint_camera, override_colors=override_colors, blur_mod=self._blur_modifier)
 
         from utils.loss_utils import normalize
 
@@ -464,7 +470,7 @@ class CUDARenderer(GaussianRenderBase):
         self.need_rerender = False
 
 
-    def render111(self, scene, viewpoint_camera, override_colors=None, overmax_opacity=False):
+    def render111(self, scene, viewpoint_camera, override_colors=None, overmax_opacity=False, blur_mod: float = 1):
         with torch.no_grad():
 
             bg_color = torch.Tensor([0.4, 0.3, 0.4]).float().cuda()
@@ -502,7 +508,7 @@ class CUDARenderer(GaussianRenderBase):
 
             means3D = scene.gaussians.get_xyz
             rot = scene.gaussians.get_rotation
-            scal, opa = scene.gaussians.get_scal_opa_w_3D
+            scal, opa = scene.gaussians.get_scal_opa_w_3D_w_blur(blur_mod)
             # scal = scene.gaussians.get_scaling
             # opa = scene.gaussians.get_opacity
 

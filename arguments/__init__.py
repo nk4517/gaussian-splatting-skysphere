@@ -100,7 +100,11 @@ class OptimizationParams:
     rotation_lr: float = 0.001
     skysphere_lr: float = 0.01
 
+    # сплитить всё, у чего 2d-градиент выше топ.95%
+    split_quantile: float = 0.95
+    # сплитить только те, которые больше экстента*percent_dense
     percent_dense: float = 0.01
+
     normal_loss: bool = False
     depth_loss: bool = False
     depth2normal_loss: bool = False

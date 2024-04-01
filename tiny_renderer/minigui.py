@@ -253,16 +253,7 @@ class SimpleGUI(CamNaka):
         imgui.begin("Control Window", False, flags=imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE)
         # imgui.text("This is the Control window")
 
-        changed, scale_modifier = imgui.slider_float(
-            "", self.g_renderer._scale_modifier, 0.01, 1, "scale=%.2f"
-        )
-        imgui.same_line()
-        if imgui.button(label="reset"):
-            scale_modifier = 1.
-            changed = True
-
-        if changed:
-            self.g_renderer.set_scale_modifier(scale_modifier)
+        self.scale_blur_widget()
 
         if self.scene is not None:
             self.cams_widget()
@@ -270,6 +261,27 @@ class SimpleGUI(CamNaka):
         self.rendermodues_widget()
 
         imgui.end()
+
+
+    def scale_blur_widget(self):
+        changed, scale_modifier = imgui.slider_float(
+            "s", self.g_renderer._scale_modifier, 0.01, 1, "scale=%.2f"
+        )
+        imgui.same_line()
+        if imgui.button(label="reset-s"):
+            scale_modifier = 1.
+            changed = True
+        if changed:
+            self.g_renderer.set_scale_modifier(scale_modifier)
+        changed2, blur_modifier = imgui.slider_float(
+            "b", self.g_renderer._blur_modifier, 0.01, 4, "blur=%.2f"
+        )
+        imgui.same_line()
+        if imgui.button(label="reset-b"):
+            blur_modifier = 1.
+            changed2 = True
+        if changed2:
+            self.g_renderer.set_blur_modifier(blur_modifier)
 
 
     def rendermodues_widget(self):
