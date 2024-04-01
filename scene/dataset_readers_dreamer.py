@@ -71,6 +71,12 @@ def readDREAMER(path: str | Path, eval, llffhold=8, load_skymask=False, N_random
 
                 monodepth = ((1 - (monodepth / 255)) * 40 + 20).astype(np.float32)
 
+            normals_path = path / "normals"
+            normals = None
+            normals_fname = (normals_path / img_path.stem).with_suffix(".png")
+            if normals_fname.is_file():
+                normals_image = cv2.imread(str(normals_fname), cv2.IMREAD_UNCHANGED)
+                normals = (normals_image[:, :, :3] / 255.0) * 2.0 - 1.0
 
             image = Image.open(img_path)
 
@@ -93,7 +99,7 @@ def readDREAMER(path: str | Path, eval, llffhold=8, load_skymask=False, N_random
             cam_name = img_path.relative_to(path / "images").with_suffix("").as_posix()
             cam_info = CameraInfo(uid=frame_id, K=K, R=R, T=T, image=image,
                                   image_path=str(img_path.absolute()), image_name=cam_name, width=w_orig, height=h_orig,
-                                  sky_mask=skymask, depth=monodepth)
+                                  sky_mask=skymask, depth=monodepth, normal=normals)
 
             # if waymo_cam == "FRONT":
             # # Split into training and testing based on llffhold
