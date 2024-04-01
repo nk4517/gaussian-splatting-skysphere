@@ -376,7 +376,7 @@ class BaseGaussianModel:
         self.statblock.expand_stats_by_N(new_xyz.shape[0])
 
 
-    def densify_and_split(self, grads, grad_threshold, scene_extent, N=2, kl_threshold=None):
+    def densify_and_split(self, grads, grad_threshold, scene_extent, seen_enough, N_new=2, kl_threshold=None):
         n_init_points = self.get_xyz.shape[0]
         # Extract points that satisfy the gradient condition
         padded_grad = torch.zeros((n_init_points), device="cuda")
@@ -407,7 +407,7 @@ class BaseGaussianModel:
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_skysphere)
 
-        prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=torch.bool)))
+        prune_filter = torch.cat((selected_pts_mask, torch.zeros(N_new * selected_pts_mask.sum(), device="cuda", dtype=torch.bool)))
         self.prune_points(prune_filter)
 
     def densify_and_clone(self, grads, grad_threshold, scene_extent, kl_threshold=None):
