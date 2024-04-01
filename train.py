@@ -178,11 +178,23 @@ def training(conf: GaussianSplattingConf, debug_from,
         #render_pkg = render(viewpoint_cam, gaussians, pipe, bg, return_normal=args.normal_loss)
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg,
                             return_normal=opt.normal_loss and not res_controller.c2f_phase,
-                            return_skyness=dataset.load_skymask and not res_controller.c2f_phase, kernel_size=kernel_size)
-        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+                            return_skyness=viewpoint_cam.sky_mask is not None, kernel_size=kernel_size,
+                            depth_threshold=opt.depth_threshold * scene.cameras_extent if opt.depth_threshold is not None else None)
+        (image,
+         viewspace_point_tensor,
+         visibility_filter,
+         radii,
+         splat_depths) = (
+            render_pkg["render"],
+            render_pkg["viewspace_points"],
+            render_pkg["visibility_filter"],
+            render_pkg["radii"],
+            render_pkg["splat_depths"],
+        )
 
         skyness = render_pkg.get("rendered_skyness")
         alpha_img = render_pkg.get("rendered_alpha")
+        n_dominated = render_pkg["n_dominated"]
 
         n_dominated = render_pkg["n_dominated"]
         n_touched = render_pkg["n_touched"]
