@@ -104,7 +104,7 @@ def loadCam(args, id, cam_info: 'CameraInfo', resolution_scale):
                   image=gt_image, image_name=cam_info.image_name, uid=id, data_device=args.data_device,
                   gt_alpha_mask=loaded_mask, sky_mask=resized_sky_mask, normal=resized_normal, depth=resized_depth)
 
-def cameraList_from_camInfos(cam_infos: list['CameraInfo'], resolution_scale, args):
+def cameraList_from_camInfos(cam_infos: list['CameraInfo'], resolution_scale, args: ModelParams):
     camera_list = []
 
     for id, c in enumerate(cam_infos):
