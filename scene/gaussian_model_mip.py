@@ -23,7 +23,7 @@ def compute_scales(scale: torch.Tensor, filter_3D_sq: torch.Tensor) -> tuple[Ten
     return torch.sqrt(scales_after_square), coef.unsqueeze(-1)
 
 
-class GaussianModelWmip(BaseGaussianModel):
+class GaussianModel(BaseGaussianModel):
 
     def propagate_depth_sq_to_filter3D(self, cameras: list[Camera], blur=1):
         invalid = ~self.statblock.min_depthF_sq.isfinite()

@@ -61,7 +61,7 @@ def save_gaussians_ply(gaussian: GaussianModel, path, save_sky=None, save_fused=
     PlyData([el]).write(path)
 
 
-def load_ply(gaussian: GaussianModel, path):
+def load_gaussians_ply(gaussian: GaussianModel, path):
     plydata = PlyData.read(path)
 
     xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
