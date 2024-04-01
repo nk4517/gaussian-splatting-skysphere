@@ -49,17 +49,17 @@ class Scene:
         source_path = Path(args.source_path)
 
         if args.agisoft_calibs:
-            from scene.dataset_readers_agisoft import readAgisoftExportInfo
+            from loaders.dataset_readers_agisoft import readAgisoftExportInfo
 
             scene_info = readAgisoftExportInfo(args.source_path, args.eval,
                                              load_skymask=args.load_skymask, N_random_init_pts=args.N_random_init_pts)
         elif args.waymo_calibs: # and (source_path / "calibs.dump").is_file() and (source_path / "images").is_dir():
-            from scene.dataset_readers_waymo import readWaymoExportInfo
+            from loaders.dataset_readers_waymo import readWaymoExportInfo
 
             scene_info = readWaymoExportInfo(args.source_path, args.eval,
                                              load_skymask=args.load_skymask, N_random_init_pts=args.N_random_init_pts)
         elif args.dreamer_calibs: # and (source_path / "calibs.dump").is_file() and (source_path / "images").is_dir():
-            from scene.dataset_readers_dreamer import readDREAMER
+            from loaders.dataset_readers_dreamer import readDREAMER
             scene_info = readDREAMER(args.source_path, args.eval,
                                      load_skymask=args.load_skymask, N_random_init_pts=args.N_random_init_pts)
         elif (source_path / "sparse").is_dir():
