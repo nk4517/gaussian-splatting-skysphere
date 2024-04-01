@@ -133,6 +133,8 @@ class OptimizationParams:
 
     random_background: bool = False
 
+    masked_image: bool = False
+
     silhouette_loss: bool = False
     silhouette_loss_type: str = "bce" # : Literal["bce", "mce"]
     lambda_silhouette: float = 2.5
