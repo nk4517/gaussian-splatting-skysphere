@@ -230,7 +230,7 @@ class SimpleGUI(CamNaka):
         # imgui.text("This is the Control window")
 
         changed, scale_modifier = imgui.slider_float(
-            "", self.g_renderer._scale_modifier, 0.01, 1, "scale=%.2f"
+            "", self.g_renderer._scale_modifier, 0.02, 1, "scale=%.2f"
         )
         imgui.same_line()
         if imgui.button(label="reset"):
