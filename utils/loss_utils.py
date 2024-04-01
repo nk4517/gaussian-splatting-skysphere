@@ -58,7 +58,7 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True, mask=None
     ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
 
     if mask is not None:
-        ssim_map = ssim_map[mask]
+        ssim_map = ssim_map[:, mask]
 
     if size_average:
         return ssim_map.mean()
@@ -67,3 +67,9 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True, mask=None
 
 def binary_cross_entropy(input, target):
     return -(target * torch.log(input) + (1 - target) * torch.log(1 - input)).mean()
+
+
+def normalize(input, mean=None, std=None):
+    input_mean = torch.mean(input, dim=1, keepdim=True) if mean is None else mean
+    input_std = torch.std(input, dim=1, keepdim=True) if std is None else std
+    return (input - input_mean) / (input_std + 1e-2*torch.std(input.reshape(-1)))

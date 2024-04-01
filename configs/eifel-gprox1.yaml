@@ -1,6 +1,6 @@
 model_params:
-  source_path: x:\_ai\_demos\_gsplat\_datasets\youtube02
-  model_path: x:\_ai\_demos\_gsplat\_datasets\youtube02\towel-my-111-c2f-start30x1
+  source_path: x:\_ai\_demos\_gsplat\_datasets\youtube05\towel
+  model_path: x:\_ai\_demos\_gsplat\_datasets\youtube05\towel-my-111-c2f-start30x1
   eval: false
   sh_degree: 1
 #  load_skymask: true
@@ -11,7 +11,7 @@ model_params:
 
 progress_params:
   #load_gaussians_path: x:\_ai\_demos\_gsplat\_datasets\youtube02\towel-my-111-c2f-start30\point_cloud\iteration_25000\point_cloud.ply
-  load_checkoint_path: x:\_ai\_demos\_gsplat\_datasets\youtube02\towel-my-111-c2f-start30\chkpnt7000.pth
+  load_checkoint_path: x:\_ai\_demos\_gsplat\_datasets\youtube05\towel-my-111-c2f-start30\chkpnt7000.pth
 
 optimization_params:
 
@@ -26,7 +26,7 @@ optimization_params:
   iterations: 25000
   densify_until_iter: 22500
 
-  densification_interval: 150
+  densification_interval: 200
 
 #  c2f: true
 #  c2f_max_sigma: 1.5

@@ -9,8 +9,8 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-import math
 import os
+import sys
 import threading
 from pathlib import Path
 from typing import Optional
@@ -18,18 +18,23 @@ from random import randint
 import uuid
 from argparse import ArgumentParser
 
+import omegaconf
 from omegaconf import OmegaConf
 import torch
 from torch.fft import fft2, fftshift
 import torch.nn.functional as F
+
+from torchmetrics.functional.regression import pearson_corrcoef
+
 from tqdm import tqdm
 
-from scene.resolution_controller import ResolutionController
+from scene.resolution_controller import ResolutionController, unload_cam_data
 from utils.fft_utils import gen_gaussian_ellipse_torch, calc_phase_dist
 from utils.loss_utils import l1_loss, ssim, binary_cross_entropy
 from gaussian_renderer import render
 from gaussian_renderer.network_gui import NetworkGUI
 from scene import Scene, GaussianModel
+from scene.cameras import project2d3d
 from utils.general_utils import safe_state
 from utils.image_utils import psnr
 from arguments import OptimizationParams, GaussianSplattingConf
@@ -41,6 +46,28 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
+with torch.no_grad():
+    kernelsize = 3
+    conv = torch.nn.Conv2d(1, 1, kernel_size=kernelsize, padding=(kernelsize // 2))
+    kernel = torch.tensor([[0., 1., 0.], [1., 1., 1.], [0., 1., 0.]]).reshape(1, 1, kernelsize, kernelsize)
+    conv.weight.data = kernel  # torch.ones((1,1,kernelsize,kernelsize))
+    conv.bias.data = torch.tensor([0.])
+    conv.requires_grad_(False)
+    conv = conv.cuda()
+
+
+def nearMean_map(array, mask, kernelsize=3):
+    """ array: (H,W) / mask: (H,W) """
+    cnt_map = torch.ones_like(array)
+
+    nearMean = conv((array * mask)[None, None])
+    cnt_map = conv((cnt_map * mask)[None, None])
+    nearMean = (nearMean / (cnt_map + 1e-8)).squeeze()
+
+    return nearMean
+
+def l2_loss(network_output, gt):
+    return ((network_output - gt) ** 2).mean()
 
 def monodisp(gt_depth: torch.Tensor, dyn_depth: torch.Tensor, loss_type: str = "l1"):
     t_d = torch.median(dyn_depth, dim=-1, keepdim=True).values
@@ -51,11 +78,38 @@ def monodisp(gt_depth: torch.Tensor, dyn_depth: torch.Tensor, loss_type: str = "
     s_gt = torch.mean(torch.abs(gt_depth - t_gt), dim=-1, keepdim=True)
     gt_depth_norm = (gt_depth - t_gt) / s_gt
 
-    disp_loss = torch.abs((dyn_depth_norm - gt_depth_norm)).mean() if loss_type == "l1" else ((dyn_depth_norm - gt_depth_norm) ** 2).mean()
+    if loss_type == "l1":
+        disp_loss = torch.abs((dyn_depth_norm - gt_depth_norm)).mean()
+    else:
+        disp_loss = ((dyn_depth_norm - gt_depth_norm) ** 2).mean()
+
     return dyn_depth_norm, gt_depth_norm, disp_loss
 
 
+def loss_depth_smoothness(depth, img):
+    img_grad_x = img[:, :, :, :-1] - img[:, :, :, 1:]
+    img_grad_y = img[:, :, :-1, :] - img[:, :, 1:, :]
+    weight_x = torch.exp(-torch.abs(img_grad_x).mean(1).unsqueeze(1))
+    weight_y = torch.exp(-torch.abs(img_grad_y).mean(1).unsqueeze(1))
 
+    loss = (((depth[:, :, :, :-1] - depth[:, :, :, 1:]).abs() * weight_x).sum() +
+            ((depth[:, :, :-1, :] - depth[:, :, 1:, :]).abs() * weight_y).sum()) / \
+           (weight_x.sum() + weight_y.sum())
+    return loss
+
+def loss_depth_grad(depth, img):
+    img_grad_x = img[:, :, :, :-1] - img[:, :, :, 1:]
+    img_grad_y = img[:, :, :-1, :] - img[:, :, 1:, :]
+    weight_x = img_grad_x / (torch.abs(img_grad_x) + 1e-6)
+    weight_y = img_grad_y / (torch.abs(img_grad_y) + 1e-6)
+
+    depth_grad_x = depth[:, :, :, :-1] - depth[:, :, :, 1:]
+    depth_grad_y = depth[:, :, :-1, :] - depth[:, :, 1:, :]
+    grad_x = depth_grad_x / (torch.abs(depth_grad_x) + 1e-6)
+    grad_y = depth_grad_y / (torch.abs(depth_grad_y) + 1e-6)
+
+    loss = l1_loss(grad_x, weight_x) + l1_loss(grad_y, weight_y)
+    return loss
 
 
 def training(conf: GaussianSplattingConf, debug_from,
@@ -120,14 +174,13 @@ def training(conf: GaussianSplattingConf, debug_from,
     fft_loss_coeffs = None
     fft_mask_sigma = None
 
-    fft_lowpass_sigma = opt.fft_lowpass_sigma_initial
+    opacity_was_reset_at_iter = -1
 
-    for iteration in range(first_iter, opt.iterations + 1):        
+    fft_lowpass_sigma = opt.fft_lowpass_sigma_initial if opt.fft_loss else None
 
-        cur_blur_fullres = inverted_logistic(iteration, max_blur, min_blur, midpoint=2500)
-        c2f_phase = cur_blur_fullres > 4
-        cur_blur_rel2cam_res = cur_blur_fullres * cur_cam_res
+    gui.setScene(scene)
 
+    for iteration in range(first_iter, opt.iterations + 1):
 
         # if network_gui is not None:
         #     with torch.no_grad():
@@ -168,26 +221,18 @@ def training(conf: GaussianSplattingConf, debug_from,
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
+        depth_threshold = None
+        if opt.depth_threshold:
+            depth_threshold = opt.depth_threshold * scene.cameras_extent
+
         #render_pkg = render(viewpoint_cam, gaussians, pipe, bg, return_normal=args.normal_loss)
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg,
                             return_normal=opt.normal_loss and not res_controller.c2f_phase,
-                            return_skyness=viewpoint_cam.sky_mask is not None, kernel_size=kernel_size,
-                            depth_threshold=opt.depth_threshold * scene.cameras_extent if opt.depth_threshold is not None else None)
-        (image,
-         viewspace_point_tensor,
-         visibility_filter,
-         radii,
-         splat_depths) = (
-            render_pkg["render"],
-            render_pkg["viewspace_points"],
-            render_pkg["visibility_filter"],
-            render_pkg["radii"],
-            render_pkg["splat_depths"],
-        )
+                            return_skyness=dataset.load_skymask and not res_controller.c2f_phase, kernel_size=kernel_size, depth_threshold=depth_threshold)
+        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         skyness = render_pkg.get("rendered_skyness")
         alpha_img = render_pkg.get("rendered_alpha")
-        n_dominated = render_pkg["n_dominated"]
 
         n_dominated = render_pkg["n_dominated"]
         n_touched = render_pkg["n_touched"]
@@ -322,27 +367,28 @@ def training(conf: GaussianSplattingConf, debug_from,
 
             update_loss_from_splat_shape(gaussians, opt, loss)
 
-            if opt.semitransparent_loss and opt.semitransparent_from_iter <=  iteration < opt.semitransparent_until_iter:
-                # полупрозрачные сплаты по возможности сделать или полностью прозрачными, или полностью непрозрачными
-                # (а потом удалить полностью прозрачные в prune)
-                # хорошо подходит для мелких объектов, но очень так-себе для уличных сцен с большой глубиной
-
-                opacity = gaussians.get_opacity.clamp(1e-6, 1-1e-6)
-                # minimization of crossentropy with itself = entropy minimization
-                semitransparent_loss = binary_cross_entropy(opacity, opacity)
-                loss += opt.lambda_semitransparent * semitransparent_loss
-
             if opt.normal_loss:
-                rendered_normal = render_pkg['rendered_normal']
-                if viewpoint_cam.normal is not None:
-                    normal_gt = viewpoint_cam.normal.cuda()
-                    if viewpoint_cam.sky_mask is not None:
-                        filter_mask = viewpoint_cam.sky_mask.to(normal_gt.device).to(torch.bool)
-                        normal_gt[~(filter_mask.unsqueeze(0).repeat(3, 1, 1))] = -10
-                    filter_mask = (normal_gt != -10)[0, :, :].to(torch.bool)
-                    l1_normal = torch.abs(rendered_normal - normal_gt).sum(dim=0)[filter_mask].mean()
-                    cos_normal = (1. - torch.sum(rendered_normal * normal_gt, dim = 0))[filter_mask].mean()
-                    loss += opt.lambda_l1_normal * l1_normal + opt.lambda_cos_normal * cos_normal
+                pass
+
+                # rendered_depth = render_pkg["rendered_depth"]
+                # rendered_normal = render_pkg['rendered_normal'] * 2 - 1
+                # nnn = pseudo_normals_from_depthmap_gradient(rendered_depth.squeeze())
+
+                # if viewpoint_cam.sky_mask is not None:
+                #     world_mask = viewpoint_cam.sky_mask.cuda().to(torch.bool)
+
+                # loss += 0.1 * (nnn[:, ~world_mask] - torch.tensor((0, 0, 1), device=nnn.device)[:, None]).norm().mean()
+                # loss += 0.001 * (nnn[:, world_mask] - rendered_normal[:, world_mask]).norm().mean()
+
+
+                # if viewpoint_cam.normal is not None:
+                #     normal_gt = viewpoint_cam.normal.cuda()[:, world_mask]
+                #
+                #     l1_normal = torch.abs(nnn[:, world_mask] - normal_gt[[1, 2, 0], ...]).sum(dim=0).mean()
+                #     # cos_normal = (1. - torch.sum(rendered_normal * normal_gt, dim = 0)).mean()
+                #     # loss += opt.lambda_l1_normal * l1_normal + opt.lambda_cos_normal * cos_normal
+                #
+                #     loss += opt.lambda_l1_normal * l1_normal
 
 
             if opt.mono_loss and hasattr(viewpoint_cam, "depth") and viewpoint_cam.depth is not None:
@@ -355,38 +401,94 @@ def training(conf: GaussianSplattingConf, debug_from,
 
                 if torch.count_nonzero(mask) > 10:
                     moonodepth = viewpoint_cam.depth.cuda().unsqueeze(0)
-                    redner_depth = render_pkg["rendered_depth"]
+                    rendered_depth = render_pkg["rendered_depth"]
 
-                    depth_mono = moonodepth[mask].clamp(1e-6)
-                    depth_render = redner_depth[mask].clamp(1e-6)
+                    depth_mask_mono = moonodepth[mask].clamp(1e-6)
+                    depth_mask_render = rendered_depth[mask].clamp(1e-6)
+
+
 
                     if opt.mono_loss_type == "mid":
-                        depth_loss = monodisp(1 / depth_mono, 1 / depth_render, 'l1')[-1]
+                        depth_loss = monodisp(1 / depth_mask_mono, 1 / depth_mask_render, 'l1')[-1]
 
                     elif opt.mono_loss_type == "pearson":
 
                         # depth_loss = torch.min(
-                        #     (1 - pearson_corrcoef(- depth_mono, depth_render)),
-                        #     (1 - pearson_corrcoef(1 / (depth_mono + 200.), depth_render))
+                        #     (1 - pearson_corrcoef(- depth_mask_mono, depth_mask_render)),
+                        #     (1 - pearson_corrcoef(1 / (depth_mask_mono + 200.), depth_mask_render))
                         # )
 
-                        disp_mono = 1 / depth_mono
-                        disp_render = 1 / depth_render
+                        disp_mono = 1 / depth_mask_mono
+                        disp_render = 1 / depth_mask_render
                         depth_loss = (1 - pearson_corrcoef(disp_render, -disp_mono)).mean()
 
+                    elif opt.mono_loss_type == "grad":
+                        depth_loss = loss_depth_grad(depth_mask_mono, depth_mask_render) + loss_depth_grad(depth_mask_mono, depth_mask_render)
 
                     else:
-                        disp_mono = 1 / viewpoint_cam.depth.cuda()[mask.squeeze()].clamp(1e-6)  # shape: [N]
-                        disp_render = 1 / render_pkg["rendered_depth"][mask].clamp(1e-6)  # shape: [N]
-                        depth_loss = monodisp(disp_mono, disp_render, 'l1')[-1]
-                elif mono_loss_type == "pearson":
-                    disp_mono = 1 / viewpoint_cam.mono_depth[viewpoint_cam.mask > 0.5].clamp(1e-6)  # shape: [N]
-                    disp_render = 1 / render_pkg["rendered_depth"][viewpoint_cam.mask > 0.5].clamp(1e-6)  # shape: [N]
-                    depth_loss = (1 - pearson_corrcoef(disp_render, -disp_mono)).mean()
-                else:
-                    raise NotImplementedError
+                        raise NotImplementedError
 
-                loss = loss + opt.lambda_mono_depth * depth_loss
+                    loss += opt.lambda_mono_depth * depth_loss
+
+        else:
+            sky_select = None
+
+        if opt.opacity_reset_interval > 0 and opacity_was_reset_at_iter > 0:
+            d_iter = iteration - opacity_was_reset_at_iter
+            r_iter1 = opt.opacity_reset_interval / 20
+            r_iter2 = opt.densification_interval * 2
+            r_iter3 = len(res_controller.trainCameras_filter3d) * 2
+            regenerating_opacity = d_iter < max(r_iter1, r_iter2, r_iter3)
+            opacity_reset_phase = iteration > opt.opacity_reset_interval
+        else:
+            regenerating_opacity = False
+            opacity_reset_phase = False
+            d_iter = -1
+
+        if opt.semitransparent_until_iter is not None:
+            semi_iter_ok = opt.semitransparent_from_iter <= iteration < opt.semitransparent_until_iter
+        else:
+            semi_iter_ok = opt.semitransparent_from_iter <= iteration
+
+        if opt.semitransparent_loss and semi_iter_ok and not regenerating_opacity:
+            # полупрозрачные сплаты по возможности сделать или полностью прозрачными, или полностью непрозрачными
+            # (а потом удалить полностью прозрачные в prune)
+            # хорошо подходит для мелких объектов, но очень так-себе для уличных сцен с большой глубиной
+
+            opacity = gaussians.get_opacity.clamp(1e-6, 1-1e-6)
+            # minimization of crossentropy with itself = entropy minimization
+            semitransparent_loss = binary_cross_entropy(opacity, opacity)
+            loss += opt.lambda_semitransparent * semitransparent_loss
+
+
+        if 0:
+            scalingsz = gaussians.get_scaling.max(dim=1).values
+            if sky_select is not None:
+                world = (gaussians.get_skysphere < 0.4).squeeze()
+                scalingsz = scalingsz[world]
+
+            loss += 2 * ((scalingsz - scene.cameras_extent / 200).clamp(0) ** 2).mean()
+
+        if 0:
+            loss += 0.5 * (6-radii[radii>0]).float().clamp(0).mean()
+
+
+        if 0:
+            depth = render_pkg["rendered_depth"].squeeze()
+
+            if not hasattr(viewpoint_cam, "canny_mask"):
+                import kornia.filters
+                magnitude, edges = kornia.filters.canny(gt_image.unsqueeze(0))
+
+                viewpoint_cam.canny_mask = edges.squeeze() > 0.5
+
+            canny_mask = viewpoint_cam.canny_mask
+
+            depth_mask = (depth>0).detach().squeeze()
+            nearDepthMean_map = nearMean_map(depth, canny_mask*depth_mask, kernelsize=3)
+            loss += l2_loss(nearDepthMean_map[~sky_select], (depth*depth_mask)[~sky_select]) * .1
+
+
 
         loss.backward()
         iter_end.record()
@@ -396,7 +498,16 @@ def training(conf: GaussianSplattingConf, debug_from,
             if not torch.isnan(loss):
                 ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             if iteration % 10 == 0:
-                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{5}f}", "N": f"{gaussians._xyz.shape[0]}", "σ": f"{splat_sigma:.2f}"})
+                params = {"Loss": f"{ema_loss_for_log:.{5}f}", "N": f"{gaussians._xyz.shape[0]}"}
+                if opt.c2f:
+                    params["σ"] = f"{kernel_size:.2f}"
+                params["blur"] = res_controller.report
+                if fft_lowpass_sigma is not None:
+                    params["fft"] = f"{fft_lowpass_sigma:.2f}"
+                if opt.semitransparent_loss:
+                    params["r_o"] = f"{regenerating_opacity}"
+                    params["r_d"] = f"{d_iter}"
+                progress_bar.set_postfix(params)
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
@@ -425,16 +536,28 @@ def training(conf: GaussianSplattingConf, debug_from,
                         d = iteration / opt.fft_lowpass_sigma_iter
                         if d <= 1.2:
                             fft_lowpass_sigma = opt.fft_lowpass_sigma_initial + d * (opt.fft_lowpass_sigma_max - opt.fft_lowpass_sigma_initial)
-                            print(f"fft_lowpass_sigma: {fft_lowpass_sigma:.4f}")
+                        else:
+                            fft_lowpass_sigma = None
 
                     res_scale = viewpoint_cam.image_width / 1920
                     size_threshold = 20 * res_scale if opacity_reset_phase and not res_controller.c2f_phase else None
                     min_opacity = 0.05 if not res_controller.c2f_phase else 0.01
                     if regenerating_opacity:
                         min_opacity = 0
-                    size_threshold = None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, min_opacity, scene.cameras_extent, size_threshold,
-                                                kl_threshold=opt.kl_threshold, skysphere_radius=opt.skysphere_radius)
+                        size_threshold = None
+
+                    outliers_sigma = None
+                    # outliers_sigma = 5 if iteration > 8_000 else None
+                    # if iteration % (opt.densification_interval*3) != 0:
+                    #     # дать 3 раза расклонироваться, чтобы пустоту заполнили
+                    #     outliers_sigma = None
+                    gaussians.densify_and_prune(
+                        opt.densify_grad_threshold, min_opacity, scene.cameras_extent, size_threshold,
+                        kl_threshold=opt.kl_threshold, skysphere_radius=opt.skysphere_radius,
+                        kill_outliers=outliers_sigma,
+                        largest_point_divider=opt.largest_point_divider,
+                        smallest_point_divider=opt.smallest_point_divider * (1 + iteration / 1000)
+                    )
 
                     gaussians.propagate_depth_sq_to_filter3D(res_controller.trainCameras_filter3d)
 
@@ -460,6 +583,8 @@ def training(conf: GaussianSplattingConf, debug_from,
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path / f"chkpnt{iteration}.pth")
 
+        scene.was_updated = True
+        torch.cuda.synchronize()
         scene_lock.release()
 
     unload_cam_data(scene)
@@ -468,38 +593,40 @@ def training(conf: GaussianSplattingConf, debug_from,
 
 def update_loss_from_splat_shape(gaussians: GaussianModel, opt: OptimizationParams, loss):
 
+    scales = gaussians.get_scaling[(gaussians.get_skysphere < 0.6).squeeze(), :]
+    scales_sky = gaussians.get_scaling[(gaussians.get_skysphere >= 0.6).squeeze(), :]
+
     # flatten loss with anisotropy regularization
     if opt.flatten_loss or opt.flatten_aniso_loss:
         # нормаль должна быть значительно короче остальных осей...
 
-        scales = gaussians.get_scaling
         sorted_scales, sorted_indices = scales.sort(dim=1, descending=True)
 
         # Split sorted scales into s1 (largest), s2 (second largest), and s3 (smallest)
         s1, s2, s3 = sorted_scales.split(1, dim=1)
 
         # Compute flatten loss based on s3 (smallest scaling)
-        min_scale = s3
-        flatten_loss = torch.abs(min_scale).mean()
+        flatten_loss = torch.clamp(s1 / s3 - 5, 0, 1e6).mean()
 
         if opt.flatten_aniso_loss:
             # ... но при этом сплаты не должны превращаться в иглы, а только в более-менее плоские диски
 
             # from https://arxiv.org/html/2401.15318v1 Eq. (6)
-            a = opt.aniso_ratio_threshold
-            aniso_loss = torch.clamp(s1 / s2 - a, 0, 1e6).mean()
+            # a = opt.aniso_ratio_threshold
+            # aniso_loss = torch.clamp(s1 / s2 - a, 0, 1e6).mean()
+            iso12_loss = torch.abs(scales[:2, :] - scales[:2, :].mean(dim=1).view(-1, 1)).mean()
 
-            loss += opt.lambda_flatten * flatten_loss + opt.lambda_aniso * aniso_loss
+            loss += opt.lambda_flatten * flatten_loss + opt.lambda_aniso * iso12_loss
         else:
             loss += opt.lambda_flatten * flatten_loss
 
     elif opt.isotropy_loss:
         # более-менее ровные  шарики, ну может слегка вытянутые по одной из осей
-        scales = gaussians.get_scaling
 
         # from https://arxiv.org/html/2312.06741v1 Eq. (14)
-        mean_scales = torch.mean(scales, dim=1, keepdim=True)
-        isotropy_loss = torch.norm(scales - mean_scales, p=1, dim=1).mean()
+        #mean_scales = torch.mean(scales, dim=1, keepdim=True)
+        #isotropy_loss = torch.norm(scales - mean_scales, p=1, dim=1).mean()
+        isotropy_loss = torch.abs(scales - scales.mean(dim=1).view(-1, 1)).mean()
 
         loss += opt.lambda_iso * isotropy_loss
     return loss
@@ -642,7 +769,8 @@ def main():
     t0.start()
 
     # Start GUI server, configure and run training
-    network_gui = NetworkGUI(args.ip, args.port)
+    # network_gui = NetworkGUI(args.ip, args.port)
+    network_gui = None
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
     training(conf, args.debug_from, network_gui, gui, scene_lock)
 

@@ -1,0 +1,33 @@
+model_params:
+  source_path: x:\_ai\_gsplat\datasets\fb_colmap_res
+  model_path: x:\_ai\_gsplat\datasets\fb_colmap_res-my1
+  eval: false
+  sh_degree: 0
+  load_mask: true
+#  N_random_init_pts: 200
+  spatial_scaling_lr_mult: .3
+
+  resolution_scales: [1, 0.33, 0.1]
+
+optimization_params:
+
+  random_background: true
+#  skysphere_radius: 30
+#  sky_depth_loss: true
+#  silhouette_loss: true
+  semitransparent_loss: true
+
+  isotropy_loss: false
+  flatten_aniso_loss: true
+
+  kl_threshold: 0.4
+
+  iterations: 25000
+  densify_until_iter: 24500
+
+#  opacity_reset_interval: -1
+  densification_interval: 300
+
+  smallest_point_divider: 75000
+
+#  c2f: true

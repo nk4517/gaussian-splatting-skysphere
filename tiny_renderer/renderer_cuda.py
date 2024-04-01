@@ -356,13 +356,16 @@ class CUDARenderer(GaussianRenderBase):
             img = pseudocolor_from_depth_gradient(depth)
 
         elif self.render_mode == self.RENDERMODE_DOMINATION:
-            img = pseudocolor_from_domination(dominating_splat)
+            #img = pseudocolor_from_domination(dominating_splat)
+            img = scene.gaussians.statblock.associated_color[dominating_splat, :]
+            img[dominating_splat == -1, :] = 0.5
+
 
 
         elif self.render_mode == self.RENDERMODE_DEPTH_FROM_RASTERIZER:
 
             sky_splats = (scene.gaussians.get_skysphere > 0.66).squeeze(1)
-            sky_invdepth = scene.gaussians.statblock.min_invDepth[sky_splats].mean() * 0.8
+            sky_invdepth = scene.gaussians.statblock.min_depthF_iteration[sky_splats].mean() * 0.8
 
             invdepth_mask = depth < (sky_invdepth * scene.getTrainCameras()[0].focal_x)
             d1: torch.Tensor = depth[invdepth_mask]
@@ -409,7 +412,7 @@ class CUDARenderer(GaussianRenderBase):
 
                 # pse1 = pse1.repeat(1, 3).contiguous()
 
-                color, _, _, _, _, _, _, _ = self.render111(scene, viewpoint_camera, override_colors=pse1, overmax_opacity=False)
+                color, _, _, _, _, _, _, _ = self.render111(scene, viewpoint_camera, override_colors=pse1, overmax_opacity=True)
                 img = color.permute(1, 2, 0)
 
             else:

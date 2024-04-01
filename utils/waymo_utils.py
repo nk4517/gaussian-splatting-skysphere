@@ -1,4 +1,3 @@
-import math
 import pickle
 from typing import Tuple
 
@@ -49,7 +48,7 @@ class WaymoCoordsHelper:
         cam = cam.upper()
 
         w, h, K, d, xform_to_sdc = self.calibs[cam]
-        cam_pose_orig = self.cam_poses[frame_idx][cam]
+        cam_pose_orig = self.frame_poses[frame_idx]
         pose_of_cam_rel_to_fr0 = inv(inv(cam_pose_orig) @ self.frame0_pose)
 
         cam_pose = self.xform_waymo2ocv(pose_of_cam_rel_to_fr0 @ xform_to_sdc)

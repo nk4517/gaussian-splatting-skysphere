@@ -1,0 +1,65 @@
+model_params:
+  source_path: x:\_ai\_waymo\tensorflow_extractor\for_colmap_raw
+  model_path: x:\_ai\_waymo\tensorflow_extractor\colmap_proj_F_FL_FR-try2
+  eval: false
+  sh_degree: 0
+#  load_skymask: true
+#  load_mask: true
+
+#  N_random_init_pts: 2000
+
+  resolution_scales: [1, 0.5, 0.2, 0.08]
+
+  spatial_scaling_lr_mult: 0.1
+  agisoft_calibs: true
+
+#progress_params:
+#  save_gaussians_iterations: [7000]
+#  save_checkoint_iterations: [15000]
+#  load_checkoint: 7000
+
+optimization_params:
+
+  scaling_lr: 0.001
+
+  position_lr_init: 0.00016
+  position_lr_final: 1.6e-05
+
+#  position_lr_init: 0.000000001
+#  scaling_lr: 0.000000001
+#  opacity_lr: 0.000000001
+#  feature_lr: 0.1
+
+#  isotropy_loss: false
+#  flatten_aniso_loss: true
+
+#  semitransparent_loss: true
+
+  random_background: true
+
+#  skysphere_loss: true
+#  sky_depth_loss: true
+#  silhouette_loss: true
+
+#  masked_image: true
+
+#  fft_loss: true
+#  fft_lowpass_sigma_iter: 2500
+
+  kl_threshold: null # 0.1
+
+  iterations: 15000
+  densify_until_iter: 13500
+
+  densification_interval: 50
+  densify_grad_threshold: 0.0006
+
+  smallest_point_divider: -1 #5000
+
+#  mono_loss: true
+#  lambda_mono_depth: 2.5
+#  mono_loss_type: "pearson"
+
+  c2f: true
+#  c2f_inflection_iteration: 5000
+#  c2f_initial_downscale: 16

@@ -2,14 +2,16 @@ model_params:
   source_path: x:\_ai\_my\dreamer1
   model_path: x:\_ai\_my\dreamer1-out
   eval: false
-  sh_degree: 1
+
   load_skymask: true
 #  load_mask: true
-  resolution: 1
 #  N_random_init_pts: 200
-  spatial_scaling_lr_mult: 20
+  spatial_scaling_lr_mult: 1
 
   dreamer_calibs: true
+
+  resolution_scales: [1, 0.33, 0.125]
+
 
 #progress_params:
 #  save_gaussians_iterations: [7000]
@@ -17,21 +19,37 @@ model_params:
 
 optimization_params:
 
+  scaling_lr: 0.0005
+
   random_background: true
+
+  semitransparent_loss: false
 
   skysphere_loss: true
   sky_depth_loss: true
 #  silhouette_loss: true
 
+  isotropy_loss: false
+  flatten_aniso_loss: true
 
-  kl_threshold: 0.4
+  normal_loss: true
 
-  iterations: 1000
-  densify_until_iter: 5000
+  mono_loss: true
+#  mono_loss_type: "grad"
+#  mono_loss_type: "pearson"
 
-  densification_interval: 2500
+  kl_threshold: null
 
-#  c2f: true
-#  c2f_max_sigma: 30
+  iterations: 5000
+
+  densify_from_iter: 500
+  densify_until_iter: 4500
+  densification_interval: 50
+
+  smallest_point_divider: 100000
+
+  c2f: true
+  c2f_inflection_iteration: 1500
+  c2f_initial_downscale: 12
 
   skysphere_radius: 300

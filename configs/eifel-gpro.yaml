@@ -1,6 +1,6 @@
 model_params:
-  source_path: x:\_ai\_demos\_gsplat\_datasets\youtube02
-  model_path: x:\_ai\_demos\_gsplat\_datasets\youtube02\towel-my-111-c2f-start30
+  source_path: x:\_ai\_demos\_gsplat\_datasets\youtube05\towel
+  model_path: x:\_ai\_demos\_gsplat\_datasets\youtube05\towel-my-111-c2f-start30
   eval: false
   sh_degree: 1
 #  load_skymask: true
@@ -20,7 +20,7 @@ optimization_params:
 #  sky_depth_loss: true
 #  silhouette_loss: true
 
-  kl_threshold: 0.1
+#  kl_threshold: 0.1
 
   iterations: 7000
   densify_until_iter: 6500

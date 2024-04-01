@@ -58,7 +58,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     means3D = pc.get_xyz
     means2D = screenspace_points
-    opacity = pc.get_opacity
+    # opacity = pc.get_opacity_with_3D_filter
+    # opacity = pc.get_opacity
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -68,8 +69,11 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     if pipe.compute_cov3D_python:
         cov3D_precomp = pc.get_covariance(scaling_modifier)
     else:
-        scales = pc.get_scaling
+        # scales = pc.get_scaling_with_3D_filter
+        # scales = pc.get_scaling
         rotations = pc.get_rotation
+
+    scales, opacity = pc.get_scal_opa_w_3D
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
@@ -125,8 +129,11 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
         R_w2c = viewpoint_camera.R.T
         normal = (R_w2c @ normal.transpose(0, 1)).transpose(0, 1)
-  
-        render_normal, _, _, _ = rasterizer(
+
+        sky_mask = pc.get_skysphere.squeeze(1) > 0.6
+        normal[sky_mask, :] = 0
+
+        render_normal, _, _, _, _, _, _, _ = rasterizer(
             means3D = means3D,
             means2D = means2D,
             shs = None,
@@ -141,7 +148,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     if False:
         density = torch.ones_like(means3D)
 
-        render_opacity, _, _, _, _, _, _, _ = rasterizer(
+        render_opacity, _, _, _, _ = rasterizer(
             means3D = means3D,
             means2D = means2D,
             shs = None,
@@ -178,7 +185,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
         rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
-        render_skyness, _, _, _, _, _ = rasterizer(
+        render_skyness, _, _, _, _, _, _, _ = rasterizer(
             means3D=means3D,
             means2D=means2D,
             shs=None,

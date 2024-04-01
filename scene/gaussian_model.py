@@ -10,18 +10,15 @@
 #
 
 import torch
-import numpy as np
 
+from arguments import OptimizationParams
 from scene.cameras import Camera
+from scene.stat_block import StatBlock
 from utils.camera_utils import depth_to_points3d
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation, kl_divergence
-from torch import nn
-import os
-from utils.system_utils import mkdir_p
-from plyfile import PlyData, PlyElement
+from torch import nn, Tensor
 from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
-from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 
 from pytorch3d.ops import knn_points
@@ -374,8 +371,7 @@ class BaseGaussianModel:
 
         self.statblock.expand_stats_by_N(new_xyz.shape[0])
 
-
-    def densify_and_split(self, grads, grad_threshold, scene_extent, seen_enough, N_new=2, kl_threshold=None):
+    def densify_and_split(self, grads, grad_threshold, scene_extent, N=2, kl_threshold=None):
         n_init_points = self.get_xyz.shape[0]
         # Extract points that satisfy the gradient condition
         padded_grad = torch.zeros((n_init_points), device="cuda")
@@ -387,7 +383,7 @@ class BaseGaussianModel:
         if kl_threshold:
             selected_pts_mask = self.update_mask_with_KL(kl_threshold, selected_pts_mask, "split")
 
-        self.split_by_mask(selected_pts_mask, N_new)
+        self.split_by_mask(selected_pts_mask, N)
 
 
     def split_by_mask(self, selected_pts_mask, N_new=2):
@@ -395,7 +391,6 @@ class BaseGaussianModel:
         means = torch.zeros((stds.size(0), 3), device="cuda")
         samples = torch.normal(mean=means, std=stds)
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N_new, 1, 1)
-
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N_new, 1)
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N_new, 1) / (self.divide_ratio * N_new))
         new_rotation = self._rotation[selected_pts_mask].repeat(N_new, 1)
@@ -409,14 +404,41 @@ class BaseGaussianModel:
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N_new * selected_pts_mask.sum(), device="cuda", dtype=torch.bool)))
         self.prune_points(prune_filter)
 
-    def densify_and_clone(self, grads, grad_threshold, scene_extent, kl_threshold=None):
-        # Extract points that satisfy the gradient condition
-        selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
-        selected_pts_mask = torch.logical_and(selected_pts_mask,
-                                              torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
+
+    def densify_and_clone_by_proximity(self, scene_extent, N = 3, kl_threshold=None):
+        dist, nearest_indices = distCUDA2(self.get_xyz)
+        selected_pts_mask = dist > 2.5
 
         if kl_threshold:
-            selected_pts_mask = self.update_mask_with_KL(kl_threshold, selected_pts_mask, "clone")
+            selected_pts_mask = self.update_mask_with_KL(kl_threshold, selected_pts_mask, "clone_prox")
+
+        new_indices = nearest_indices[selected_pts_mask].reshape(-1).long()
+        source_xyz = self._xyz[selected_pts_mask].repeat(1, N, 1).reshape(-1, 3)
+        target_xyz = self._xyz[new_indices]
+        new_xyz = (source_xyz + target_xyz) / 2
+        new_scaling = self._scaling[new_indices]
+        new_rotation = torch.zeros_like(self._rotation[new_indices])
+        new_rotation[:, 0] = 1
+        new_features_dc = torch.zeros_like(self._features_dc[new_indices])
+        new_features_rest = torch.zeros_like(self._features_rest[new_indices])
+        new_opacity = self._opacity[new_indices]
+        new_skysphere = self._skysphere[new_indices]
+
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_skysphere)
+
+
+    def densify_and_clone(self, grads, grad_threshold, scene_extent, kl_threshold=None, min_dist=None):
+        # Extract points that satisfy the gradient condition
+        selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
+        biggest_scale = torch.max(self.get_scaling, dim=1).values
+        selected_pts_mask &= biggest_scale <= self.percent_dense * scene_extent
+        # selected_pts_mask &= (self.get_opacity > 0.5).squeeze()
+
+        # dist, nearest_indices = distCUDA2(self.get_xyz)
+        # selected_pts_mask &= dist > 0.0025
+
+        if kl_threshold:
+            selected_pts_mask = self.update_mask_with_KL(kl_threshold, selected_pts_mask, "clone", min_dist=min_dist)
 
         new_xyz = self._xyz[selected_pts_mask]
         new_features_dc = self._features_dc[selected_pts_mask]
@@ -428,51 +450,96 @@ class BaseGaussianModel:
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_skysphere)
 
-    def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size, kl_threshold=None, skysphere_radius=300):
-        grads = self.xyz_gradient_accum / self.denom
-        grads[grads.isnan()] = 0.0
 
-        self.densify_and_clone(grads, max_grad, extent, kl_threshold=kl_threshold)
-        self.densify_and_split(grads, max_grad, extent, kl_threshold=kl_threshold)
-        if kl_threshold:
-            self.kl_merge(grads, max_grad, extent, kl_threshold=kl_threshold/4)
-
+    def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size,
+                          kl_threshold=None, skysphere_radius=300, kill_outliers: float | None = False,
+                          largest_point_divider=5, smallest_point_divider=2500):
         prune_mask = (self.get_opacity < min_opacity).squeeze()
         print(f"prune by opacity: {torch.count_nonzero(prune_mask)} / {prune_mask.shape[0]}")
 
         # а ещё грохнуть небо, слишком отклоняющееся от сферы и слишком далёкую землю
-        sertain_world_mask = (self.get_skysphere.detach() < 0.25).squeeze()
-        sertain_sky_mask = (self.get_skysphere.detach() > 0.75).squeeze()
-        sky_dist = torch.norm(self.get_xyz[sertain_sky_mask].detach(), dim=1).squeeze()
-        bad_sky = (sky_dist < skysphere_radius * 0.9) | (sky_dist > skysphere_radius * 1.1)
-        xyz_world = self.get_xyz[sertain_world_mask].detach()
-        bad_world_dist = torch.norm(xyz_world, dim=1).squeeze() >= skysphere_radius / 3
-        print(f"bad skysphere distance: {torch.count_nonzero(bad_sky)} sky, {torch.count_nonzero(bad_world_dist)} world")
-        prune_mask[sertain_sky_mask] |= bad_sky
-        prune_mask[sertain_world_mask] |= bad_world_dist
+
+
+        if not skysphere_radius > 0:
+            # всё считается миром.
+            xyz_world = self.get_xyz.detach()
+            sertain_world_mask = torch.ones_like(prune_mask)
+        else:
+            sertain_world_mask = (self.get_skysphere.detach() < 0.25).squeeze()
+            sertain_sky_mask = (self.get_skysphere.detach() > 0.75).squeeze()
+
+            sky_dist = torch.norm(self.get_xyz[sertain_sky_mask].detach(), dim=1).squeeze()
+            bad_sky = (sky_dist < skysphere_radius * 0.9) | (sky_dist > skysphere_radius * 1.1)
+            xyz_world = self.get_xyz[sertain_world_mask].detach()
+            bad_world_dist = torch.norm(xyz_world, dim=1).squeeze() >= skysphere_radius / 3
+            print(f"bad skysphere distance: {torch.count_nonzero(bad_sky)} sky, {torch.count_nonzero(bad_world_dist)} world")
+            prune_mask[sertain_sky_mask] |= bad_sky
+            prune_mask[sertain_world_mask] |= bad_world_dist
 
         # не, без этих фоновых точек - слишком геометрию поводит
-        if 0:
-            dists_to_nearest: torch.Tensor = knn_points(xyz_world[None, ...], xyz_world[None, ...], K=2).dists[0, :, 1]
+        if kill_outliers and extent > 0:
+            dists_to_nearest: torch.Tensor = knn_points(xyz_world[None, ...], xyz_world[None, ...], K=2).dists[0, :, 1].to(prune_mask.device)
             mean_dist_between = dists_to_nearest.mean()
             sigma = dists_to_nearest.std()
-            lone_pts = dists_to_nearest > (mean_dist_between + 7*sigma)
+            spacing_max = max(extent/100, (mean_dist_between + kill_outliers * sigma))
+            lone_pts = dists_to_nearest > spacing_max
+            mm = torch.rand(lone_pts.shape[0], device=prune_mask.device)
+            lone_pts[mm > 0.25] = False
             print(f"lone world points: {torch.count_nonzero(lone_pts)}")
             prune_by_lonelesnes = torch.zeros_like(prune_mask)
             prune_by_lonelesnes[sertain_world_mask] = lone_pts
 
             prune_mask |= prune_by_lonelesnes
 
-        if max_screen_size:
-            max_extent = torch.full_like(self._scaling[:, 0], fill_value=0.1 * extent)
-            # небо далеко, и пиксели там большие.
-            # и не сразу становится понятно - небо там, или как
-            max_extent[~sertain_world_mask] *= 100
+        # невидимыми могут и оказаться ставшие слишком мелкими и выключенные из рендеринга из-за этого
+        if 0:
+            invisible_points = self.n_touched_accum == 0
+            print(f"invisible_points: {torch.count_nonzero(invisible_points)}")
+            prune_mask |= invisible_points.squeeze(1)
 
-            big_points_vs = self.max_radii2D > max_screen_size
-            big_points_ws = self.get_scaling.max(dim=1).values > max_extent
-            prune_mask |= big_points_vs | big_points_ws
+        if max_screen_size:
+            # max_extent = torch.full_like(self._scaling[:, 0], fill_value=0.2*extent)
+            # # небо далеко, и пиксели там большие.
+            # # и не сразу становится понятно - небо там, или как
+            # max_extent[~sertain_world_mask] *= 100
+
+            # big_points_vs = self.max_radii2D > max_screen_size
+            # ws = big_points_vs | big_points_ws
+            pass
+
+
+        big_points_ws = self.get_scaling.max(dim=1).values > extent / largest_point_divider
+        ws = (big_points_ws & sertain_world_mask)
+
+        if smallest_point_divider > 0:
+            small_points_ws = self.get_scaling.max(dim=1).values < extent / smallest_point_divider
+            ws |= small_points_ws
+            print(f"big_points: {torch.count_nonzero(big_points_ws)}, small_points: {torch.count_nonzero(small_points_ws)}")
+        else:
+            print(f"big_points: {torch.count_nonzero(big_points_ws)}")
+
+        prune_mask |= ws
+
         self.prune_points(prune_mask)
+
+        # s = float(self.n_touched.sum())
+        denom = self.statblock.n_touched_accum
+        grads = self.statblock.xyz_gradient_accum / denom
+        grads[grads.isnan()] = 0.0
+
+        # weights = self.n_touched / self.n_touched.sum()
+        # grads_w = self.xyz_gradient_accum * weights
+
+        if smallest_point_divider > 0:
+            min_dist = extent / smallest_point_divider * 2
+        else:
+            min_dist = None
+
+        self.densify_and_clone(grads, max_grad, extent, kl_threshold=kl_threshold, min_dist=min_dist)
+        # self.densify_and_clone_by_proximity(scene_extent=extent, kl_threshold=kl_threshold)
+        self.densify_and_split(grads, max_grad, extent, kl_threshold=kl_threshold)
+        # if kl_threshold:
+        self.kl_merge(grads, max_grad, extent, kl_threshold=0.1)#kl_threshold/4)
 
 
     def update_mask_with_KL(self, kl_threshold, selected_pts_mask, op_name="unk", min_dist=None):
@@ -516,15 +583,19 @@ class BaseGaussianModel:
         if torch.count_nonzero(kl_thres_mask) == 0:
             return
 
-        print(f"[kl merge]: (-{(int(torch.count_nonzero(kl_thres_mask)))})")
-
         kl_full_mask = torch.zeros_like(selected_pts_mask)
         kl_full_mask[selected_pts_mask] = kl_thres_mask
 
         selected_pts_mask &= kl_full_mask
 
         # создаём усреднённые точки
-        selected_point_ids = point_ids[0]
+        selected_point_ids = point_ids[:, kl_thres_mask, :][0]
+
+        revs = torch.all(selected_point_ids == torch.dstack((torch.max(selected_point_ids, dim=1)[0], torch.min(selected_point_ids, dim=1)[0]))[0], dim=1)
+        selected_point_ids = selected_point_ids[~revs]
+
+        print(f"[kl merge]: (-{(int(selected_point_ids.shape[0]))}")
+
         new_xyz = self.get_xyz[selected_point_ids].mean(1)
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_point_ids][:,0] / 0.8)
         new_rotation = self._rotation[selected_point_ids][:,0]
@@ -533,14 +604,13 @@ class BaseGaussianModel:
         new_opacity = self._opacity[selected_point_ids].mean(1)
         new_skysphere = self._skysphere[selected_point_ids][:,0]
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_skysphere)
-
         # удаляем исходные
         selected_pts_mask[selected_point_ids[:,1]] = True
-        # prune_filter = torch.cat((selected_pts_mask, torch.zeros(selected_pts_mask.sum(), device="cuda", dtype=bool)))
-        prune_filter = torch.cat((selected_pts_mask, torch.zeros(new_xyz.shape[0], device="cuda", dtype=bool)))
-        self.prune_points(prune_filter)
+        # # prune_filter = torch.cat((selected_pts_mask, torch.zeros(selected_pts_mask.sum(), device="cuda", dtype=bool)))
+        # prune_filter = torch.cat((selected_pts_mask, torch.zeros(new_xyz.shape[0], device="cuda", dtype=bool)))
+        self.prune_points(selected_pts_mask)
 
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_skysphere)
 
 
     def calc_kl_div(self, selected_pts_mask=None, min_dist=None):
@@ -590,6 +660,6 @@ class BaseGaussianModel:
         colors = gt_image.permute(1, 2, 0)[mask]
 
         params = self.params_from_points3d(points3d, colors, None, skyness)
-        if params is not None:
-            self.densification_postfix(*params)
+        #update gaussians
+        self.densification_postfix(*params)
 

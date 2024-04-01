@@ -9,87 +9,89 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-import math
-from math import ceil, floor
+from math import floor
 import typing
 
-from scene.cameras import Camera
 import numpy as np
+
 
 if typing.TYPE_CHECKING:
     from scene.dataset_readers import CameraInfo
 
-from utils.general_utils import PILtoTorch
-from utils.graphics_utils import fov2focal
-import cv2
 import torch
+import torch.nn.functional as F
+import torchvision.transforms.functional as VF
 
 WARNED = False
 
 
 def rescale_K(K: np.ndarray, scale):
-    K = np.copy(K) / scale
+    K = np.copy(K) * scale
     K[2, 2] = 1
     return K
+
+
+def resize_single_channel(input_tensor, resolution):
+    input_tensor = input_tensor.unsqueeze(0).unsqueeze(0)
+    resized_tensor = F.interpolate(input_tensor, size=resolution, mode='nearest-exact')
+    return resized_tensor.squeeze()
 
 
 def loadCam(args, id, cam_info: 'CameraInfo', resolution_scale):
     orig_w, orig_h = cam_info.image.size
 
-    if args.resolution in [1, 2, 4, 8]:
-        scale = resolution_scale * args.resolution
-    else:  # should be a type that converts to float
-        if args.resolution == -1:
-            if orig_w > 1600:
-                global WARNED
-                if not WARNED:
-                    print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
-                        "If this is not desired, please explicitly specify '--resolution/-r' as 1")
-                    WARNED = True
-                global_down = orig_w / 1600
-            else:
-                global_down = 1
-        else:
-            global_down = orig_w / args.resolution
+    # if args.resolution in [1, 2, 4, 8]:
+    scale_down = 1/resolution_scale
+    # else:  # should be a type that converts to float
+    #     if args.resolution == -1:
+    #         if orig_w > 1600:
+    #             global WARNED
+    #             if not WARNED:
+    #                 print("[ INFO ] Encountered quite large input images (>1.6K pixels width), rescaling to 1.6K.\n "
+    #                     "If this is not desired, please explicitly specify '--resolution/-r' as 1")
+    #                 WARNED = True
+    #             global_down = orig_w / 1600
+    #         else:
+    #             global_down = 1
+    #     else:
+    #         global_down = orig_w / args.resolution
+    #
+    #     scale_down = max(float(global_down), 1/resolution_scale)
 
-        scale = float(global_down) * float(resolution_scale)
-
-    if scale != 1:
-        resolution = (floor(orig_w / scale), floor(orig_h / scale))
-        K = rescale_K(cam_info.K, scale)
+    if scale_down != 1:
+        resolution = (floor(orig_w / scale_down), floor(orig_h / scale_down))
+        K = rescale_K(cam_info.K, 1/scale_down)
     else:
         resolution = (orig_w, orig_h)
         K = cam_info.K
 
+    r_inv = (resolution[1], resolution[0])
 
-    resized_image_rgb = PILtoTorch(cam_info.image, resolution)
+    orig_f_cuda = (VF.pil_to_tensor(cam_info.image) / 255).float().unsqueeze(0).cuda()
+    resized_image_rgb = F.interpolate(orig_f_cuda, r_inv, mode='bilinear').squeeze(0)
+
+    # resized_image_rgb = PILtoTorch(cam_info.image, resolution)
     if cam_info.sky_mask is not None:
-        if scale != 1:
-            resized_mask_npy = cv2.resize(cam_info.sky_mask.astype(np.uint8), resolution, interpolation=cv2.INTER_NEAREST).astype(np.bool_)
-        else:
-            resized_mask_npy = cam_info.sky_mask
-        resized_sky_mask = torch.tensor(resized_mask_npy).to(resized_image_rgb.device)
+        sky_mask_tensor = torch.tensor(cam_info.sky_mask.astype(np.float32), device=resized_image_rgb.device)
+        resized_sky_mask = resize_single_channel(sky_mask_tensor, r_inv).to(torch.bool)
     else:
         resized_sky_mask = None
 
     if cam_info.gt_mask is not None:
-        if scale != 1:
-            resized_mask_npy = cv2.resize(cam_info.gt_mask.astype(np.float32), resolution, interpolation=cv2.INTER_NEAREST).astype(np.bool_)
-        else:
-            resized_mask_npy = cam_info.gt_mask
-        resized_gt_mask = torch.tensor(resized_mask_npy).float().to(resized_image_rgb.device)[None, ...]
+        gt_mask_tensor = torch.tensor(cam_info.gt_mask.astype(np.float32), device=resized_image_rgb.device)
+        resized_gt_mask = resize_single_channel(gt_mask_tensor, r_inv)
     else:
         resized_gt_mask = None
 
-
     if cam_info.normal is not None:
-        resized_normal = torch.tensor(cv2.resize(cam_info.normal.transpose((1, 2, 0)), resolution, interpolation=cv2.INTER_NEAREST)).to(resized_image_rgb.device)
-        resized_normal = resized_normal.permute((2, 0, 1))
+        normal_tensor = torch.tensor(cam_info.normal, device=resized_image_rgb.device, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
+        resized_normal = F.interpolate(normal_tensor, r_inv, mode='nearest').squeeze(0)
     else:
         resized_normal = None
-    
+
     if cam_info.depth is not None:
-        resized_depth = torch.tensor(cv2.resize(cam_info.depth.squeeze(), resolution, interpolation=cv2.INTER_NEAREST)).to(resized_image_rgb.device)
+        depth_tensor = torch.tensor(cam_info.depth.astype(np.float32), device=resized_image_rgb.device)
+        resized_depth = resize_single_channel(depth_tensor, r_inv)
     else:
         resized_depth = None
 
@@ -100,11 +102,12 @@ def loadCam(args, id, cam_info: 'CameraInfo', resolution_scale):
     else:
         loaded_mask = resized_gt_mask
 
+    from scene.cameras import Camera
     return Camera(colmap_id=cam_info.uid, K=K, R=cam_info.R, T=cam_info.T,
                   image=gt_image, image_name=cam_info.image_name, uid=id, data_device=args.data_device,
                   gt_alpha_mask=loaded_mask, sky_mask=resized_sky_mask, normal=resized_normal, depth=resized_depth)
 
-def cameraList_from_camInfos(cam_infos: list['CameraInfo'], resolution_scale, args: ModelParams):
+def cameraList_from_camInfos(cam_infos: list['CameraInfo'], resolution_scale, args):
     camera_list = []
 
     for id, c in enumerate(cam_infos):

@@ -105,8 +105,8 @@ class OptimizationParams:
     depth_loss: bool = False
     depth2normal_loss: bool = False
 
-    lambda_l1_normal: float = 0.01
-    lambda_cos_normal: float = 0.01
+    lambda_l1_normal: float = 0.001
+    lambda_cos_normal: float = 0.001
 
     lambda_dssim: float = 0.2
     lambda_lpips: float = 0.2
@@ -122,9 +122,9 @@ class OptimizationParams:
     flatten_aniso_loss: bool = False
     isotropy_loss: bool = True
     lambda_flatten: float = 0.5
-    lambda_aniso: float = 5.0
+    lambda_aniso: float = 5.
     lambda_iso: float = 0.25
-    aniso_ratio_threshold: float = 2.5
+    aniso_ratio_threshold: float = 1.5
 
     skysphere_loss: bool = False
     sky_depth_loss: bool = False
@@ -157,16 +157,23 @@ class OptimizationParams:
     silhouette_loss_type: str = "bce" # : Literal["bce", "mce"]
     lambda_silhouette: float = 2.5
 
+    #mono loss
+    mono_loss: bool = False
+    mono_loss_type: str = "mid" # "mid", "pearson"
+    lambda_mono_depth: float = 0.01
+
     kl_threshold: float | None = None
 
     largest_point_divider: int = 5
     smallest_point_divider: int = 2_500
 
     divide_ratio: float = 0.8
-    default_sigma: float = 0.3
-    c2f: bool = False
-    c2f_max_sigma: float = 300
-    c2f_every_step: int = 100
+    default_sigma: float = 0.1
+
+    c2f: bool = True
+    c2f_initial_downscale: int = -1
+    c2f_final_downscale: int = -1
+    c2f_inflection_iteration: int = 3000
 
 
 @dataclass

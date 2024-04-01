@@ -5,7 +5,9 @@ model_params:
   source_path: ???
   model_path: ???
   images: images
-  resolution: -1
+
+  resolution_scales: [1, 0.25]
+
   white_background: false
   data_device: cuda
   load_mask: false
@@ -57,7 +59,7 @@ optimization_params:
   isotropy_loss: true
   lambda_flatten: 0.5
   lambda_aniso: 5.0
-  lambda_iso: 0.25
+  lambda_iso: 0.5
   aniso_ratio_threshold: 2.5
 
 #  skysphere:
@@ -77,6 +79,11 @@ optimization_params:
   lambda_fft_ampl: .00005
   lambda_fft_phi: .000025
 
+  #monodepth
+  mono_loss: false
+  mono_loss_type: "mid" # "mid", "pearson"
+  lambda_mono_depth: 0.01
+
   densification_interval: 100
   opacity_reset_interval: 3000
   densify_from_iter: 500
@@ -91,11 +98,10 @@ optimization_params:
   kl_threshold: 0.1
 
   largest_point_divider: 5
-  smallest_point_divider: 2500
+  smallest_point_divider: -1
 
   divide_ratio: 0.8
-  default_sigma: 0.3
-  c2f: false
-  c2f_max_sigma: 300.0
-  c2f_every_step: 100
+  default_sigma: 0.1
 
+  c2f: false
+  c2f_inflection_iteration: 3000
