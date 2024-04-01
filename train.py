@@ -211,7 +211,7 @@ def training(conf: GaussianSplattingConf, debug_from,
 
         if not res_controller.c2f_phase:
 
-            if opt.fft_loss and fft_lowpass_sigma < opt.fft_lowpass_sigma_max:
+            if opt.fft_loss and fft_lowpass_sigma is not None:
                 if fft_lowpass_mask is None or gt_image.shape[1:] != fft_lowpass_mask.shape or fft_mask_sigma != fft_lowpass_sigma:
                     fft_mask_sigma = fft_lowpass_sigma
                     fft_lowpass_mask = fftshift(gen_gaussian_ellipse_torch(gt_image.shape[2], gt_image.shape[1], sigma=fft_lowpass_sigma).to(gt_image.device).repeat(1, 3, 1, 1))
