@@ -519,7 +519,7 @@ class BaseGaussianModel:
         split_too_big = True
 
         if split_too_big:
-            mask = (self.statblock.max_screenPct > 0.001)
+            mask = (self.statblock.max_screenPct > 0.01)
             mask = stoch1(mask, 0.15)
             if mask.any():
                 print(f"split_too_big: {mask.count_nonzero()}")
