@@ -19,7 +19,7 @@ class ModelParams:
     sh_degree: int = 0
 
     resolution_scales: tuple = (1.0, 1/4)
-    resolution_scales_bw: tuple = (1/4,)
+    resolution_scales_bw: tuple = tuple()
 
     agisoft_calibs: bool = False
     waymo_calibs: bool = False
