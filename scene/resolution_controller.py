@@ -62,6 +62,8 @@ class ResolutionController:
         # нужно переключаться на камеру с большим разрешением
         ava = [v for v in self.avail_res if v > self.cur_cam_res]
         if ava:
+            unload_res(self.scene, self.cur_cam_res)
+
             self.cur_cam_res = min(ava)
             self.cur_downscale_rel2cam = self.cur_downscale_fullres * self.cur_cam_res
 

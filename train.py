@@ -55,6 +55,9 @@ def monodisp(gt_depth: torch.Tensor, dyn_depth: torch.Tensor, loss_type: str = "
     return dyn_depth_norm, gt_depth_norm, disp_loss
 
 
+
+
+
 def training(conf: GaussianSplattingConf, debug_from,
              network_gui: Optional[NetworkGUI], gui, scene_lock: threading.RLock):
 
