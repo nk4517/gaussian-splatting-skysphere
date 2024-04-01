@@ -369,6 +369,11 @@ class CUDARenderer(GaussianRenderBase):
             img = scene.gaussians.statblock.associated_color[dominating_splat, :]
             img[dominating_splat == -1, :] = 0.5
 
+        elif self.render_mode == self.RENDERMODE_DOMINATING_DEPTH:
+            #img = pseudocolor_from_domination(dominating_splat)
+            img = scene.gaussians.statblock.min_depthF[dominating_splat]
+            img = apply_colormap(img, cm_data_sunglight).contiguous()
+
 
 
         elif self.render_mode == self.RENDERMODE_DEPTH_FROM_RASTERIZER:
