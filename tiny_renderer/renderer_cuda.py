@@ -190,6 +190,7 @@ def pseudocolor_from_depth_gradient(depth):
 
 
 class CUDARenderer(GaussianRenderBase):
+    RENDERMODE_DOMINATION = -6
     RENDERMODE_BLURINESS = -5
     RENDERMODE_DEPTH_IMAGE_GRADIENT = -4
     RENDERMODE_DEPTH_SPEUDOCOLOR = -3
@@ -197,6 +198,7 @@ class CUDARenderer(GaussianRenderBase):
     RENDERMODE_NORMALS_PSEUDOCOLORS = -2
 
     render_modes = OrderedDict([
+        ("Domination", RENDERMODE_DOMINATION),
         ("Bluriness", RENDERMODE_BLURINESS),
         ("Depth (pseudoRGB)", RENDERMODE_DEPTH_SPEUDOCOLOR),
         ("Depth (Rasterizer)", RENDERMODE_DEPTH_FROM_RASTERIZER),
@@ -341,12 +343,16 @@ class CUDARenderer(GaussianRenderBase):
         if self.render_mode == self.RENDERMODE_NORMALS_PSEUDOCOLORS:
             override_colors = pseudocolor_from_splat_orientation(scene, viewpoint_camera)
 
-        color, radii, depth, alpha, n_touched, splat_depths = self.render111(scene, viewpoint_camera, override_colors=override_colors)
+        color, radii, depth, alpha, n_touched, splat_depths, n_dominated, dominating_splat = self.render111(scene, viewpoint_camera, override_colors=override_colors)
 
         from utils.loss_utils import normalize
 
         if self.render_mode == self.RENDERMODE_DEPTH_IMAGE_GRADIENT:
             img = pseudocolor_from_depth_gradient(depth)
+
+        elif self.render_mode == self.RENDERMODE_DOMINATION:
+            img = pseudocolor_from_domination(dominating_splat)
+
 
         elif self.render_mode == self.RENDERMODE_DEPTH_FROM_RASTERIZER:
             img = normalize(depth).clamp(0, 1).permute(1, 2, 0)
