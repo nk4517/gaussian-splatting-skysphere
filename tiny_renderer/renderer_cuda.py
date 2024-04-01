@@ -258,56 +258,146 @@ class CUDARenderer(GaussianRenderBase):
         if scene is None or viewpoint_camera is None:
             return
 
-        bg_color = torch.Tensor([0., 0., 0]).float().cuda()
-        kernel_size = 0.1
+        if not self.need_rerender:
+            return
 
-        tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
-        tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+        override_colors = None
+        if self.render_mode == self.RENDERMODE_NORMALS_PSEUDOCOLORS:
+            override_colors = pseudocolor_from_splat_orientation(scene, viewpoint_camera)
 
-        raster_settings = GaussianRasterizationSettings(
-            image_height=self.height,
-            image_width=self.width,
-            tanfovx=tanfovx,
-            tanfovy=tanfovy,
-            kernel_size=kernel_size,
-            bg=bg_color,
-            scale_modifier=self._scale_modifier,
-            viewmatrix=viewpoint_camera.world_view_transform,
-            projmatrix=viewpoint_camera.full_proj_transform,
-            projmatrix_raw=viewpoint_camera.full_proj_transform,
-            sh_degree=scene.gaussians.active_sh_degree,
-            campos=viewpoint_camera.camera_center,
-            prefiltered=False,
-            debug=False
-        )
+        color, radii, depth, alpha, n_touched, splat_depths = self.render111(scene, viewpoint_camera, override_colors=override_colors)
 
-        rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+        from utils.loss_utils import normalize
 
+        if self.render_mode == self.RENDERMODE_DEPTH_IMAGE_GRADIENT:
+            img = pseudocolor_from_depth_gradient(depth)
+
+        elif self.render_mode == self.RENDERMODE_DEPTH_FROM_RASTERIZER:
+            img = normalize(depth).clamp(0, 1).permute(1, 2, 0)
+
+        elif self.render_mode == self.RENDERMODE_BLURINESS:
+            # accumed = scene.gaussians.xyz_gradient_accum / scene.gaussians.n_touched_accum
+            # accumed[~accumed.isfinite()] = 0
+            # accumed /= accumed.max()
+            # pse1 = (accumed).repeat(1, 3).contiguous()
+
+            # area = 2 * math.pi * (radii**2)
+            # n_total = (viewpoint_camera.image_width * viewpoint_camera.image_height)
+            # pct = n_touched / n_total
+
+            #naka = normalize(n_touched.float().unsqueeze(0)).unsqueeze(0)
+
+            # dist = torch.norm(scene.gaussians.get_xyz - viewpoint_camera.camera_center[None, ...], dim=1)
+            # pse1 = normalize(dist.clamp(1e-6, 1e6).square().unsqueeze(0)).permute(1, 0).repeat(1, 3)
+
+            sky_mask = scene.gaussians.get_skysphere.squeeze(1) > 0.6
+
+            sq = scene.gaussians.statblock.filter3d_sq.sqrt().unsqueeze(1)
+
+            if sq.shape[0]:
+
+                sq[sky_mask, :] = 0
+
+                pse1 = sq
+                pse1[sky_mask, :] = 0
+
+                from tiny_renderer.colormaps111 import cm_data_magma_r
+                from tiny_renderer.colormaps111 import apply_colormap
+
+                from tiny_renderer.colormaps111 import cm_data_twilight, cm_data_sunglight
+
+                pse1 = apply_colormap(pse1, cm_data_sunglight).contiguous()
+
+                # pse1 = pse1.repeat(1, 3).contiguous()
+
+                color, _, _, _, _, _ = self.render111(scene, viewpoint_camera, override_colors=pse1, overmax_opacity=False)
+                img = color.permute(1, 2, 0)
+
+            else:
+                img = color.permute(1, 2, 0)
+
+        else:
+            img = color.permute(1, 2, 0)
+
+        if len(img.shape) == 3 and img.shape[2] == 3:
+            img = torch.concat([img, torch.ones_like(img[..., :1])], dim=-1)
+            img = img.contiguous()
+        elif len(img.shape) == 3 and img.shape[2] == 1:
+            img = img.repeat(1, 1, 3)
+            img = torch.concat([img, torch.ones_like(img[..., :1])], dim=-1)
+            img = img.contiguous()
+
+        self.transfert1(img)
+
+        self.need_rerender = False
+
+
+    def render111(self, scene, viewpoint_camera, override_colors=None, overmax_opacity=False):
         with torch.no_grad():
 
-            sh = scene.gaussians.get_features
-            colors = None
-            if self._scale_modifier < 0.02:
-                opa = torch.full_like(scene.gaussians._opacity, fill_value=1e3)
-            else:
-                opa = scene.gaussians.get_opacity_with_3D_filter
+            bg_color = torch.Tensor([0., 0., 0]).float().cuda()
+            kernel_size = 0.1
 
-            color, radii, depth, alpha, _ = rasterizer(
-                means3D=scene.gaussians.get_xyz,
+            tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
+            tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+
+            raster_settings = GaussianRasterizationSettings(
+                image_height=self.height,
+                image_width=self.width,
+                tanfovx=tanfovx,
+                tanfovy=tanfovy,
+                kernel_size=kernel_size,
+                bg=bg_color,
+                scale_modifier=self._scale_modifier,
+                viewmatrix=viewpoint_camera.world_view_transform,
+                projmatrix=viewpoint_camera.full_proj_transform,
+                projmatrix_raw=viewpoint_camera.projection_matrix,
+                sh_degree=scene.gaussians.active_sh_degree,
+                campos=viewpoint_camera.camera_center,
+                prefiltered=False,
+                depth_threshold=None,
+                debug=False
+            )
+
+            rasterizer = GaussianRasterizer(raster_settings=raster_settings)
+
+            if override_colors is not None:
+                sh = None
+                colors = override_colors.contiguous()
+            else:
+                sh = scene.gaussians.get_features.contiguous()
+                colors = None
+
+            means3D = scene.gaussians.get_xyz
+            rot = scene.gaussians.get_rotation
+            scal, opa = scene.gaussians.get_scal_opa_w_3D
+            # scal = scene.gaussians.get_scaling
+            # opa = scene.gaussians.get_opacity
+
+            if overmax_opacity or self._scale_modifier <= 0.02:
+                opa = torch.full_like(scene.gaussians._opacity, fill_value=1e3)
+
+            if self._scale_modifier <= 0.02:
+                scal = scene.gaussians.get_scaling
+            # else:
+            #     scal, opa = scene.gaussians.get_scal_opa_w_3D
+            #     # opa = scene.gaussians.get_opacity_with_3D_filter
+            #     # scal = scene.gaussians.get_scaling_with_3D_filter
+
+            cov3D_precomp = None
+
+            color, radii, depth, alpha, n_touched, splat_depths = rasterizer(
+                means3D=means3D.contiguous(),
                 means2D=None,
                 shs=sh,
                 colors_precomp=colors,
-                opacities=opa,
-                scales=scene.gaussians.get_scaling_with_3D_filter,
-                rotations=scene.gaussians.get_rotation,
-                cov3D_precomp=None
+                opacities=opa.contiguous(),
+                scales=scal.contiguous(),
+                rotations=rot.contiguous(),
+                cov3D_precomp=cov3D_precomp
             )
 
-        img = color.permute(1, 2, 0)
-        img = torch.concat([img, torch.ones_like(img[..., :1])], dim=-1)
-        img = img.contiguous()
-
-        self.transfert1(img)
+        return color, radii, depth, alpha, n_touched, splat_depths
 
 
     def transfert1(self, img_rgba: torch.Tensor):
