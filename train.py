@@ -629,6 +629,12 @@ def update_loss_from_splat_shape(gaussians: GaussianModel, opt: OptimizationPara
         isotropy_loss = torch.abs(scales - scales.mean(dim=1).view(-1, 1)).mean()
 
         loss += opt.lambda_iso * isotropy_loss
+
+    # для неба - всегда ослабленная изотропная регуляризация
+    if scales_sky.count_nonzero() > 0:
+        isotropy_loss_sky = torch.abs(scales_sky - scales_sky.mean(dim=1).view(-1, 1)).mean()
+        loss += opt.lambda_iso * isotropy_loss_sky
+
     return loss
 
 

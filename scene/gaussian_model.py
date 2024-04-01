@@ -193,23 +193,6 @@ class BaseGaussianModel:
 
         return p_xyz, p_features_dc, p_features_rest, p_opacities, p_scaling, p_rotation, p_skysphere
 
-    def create_from_pcd(self, pcd: BasicPointCloud, spatial_lr_scale: float = 1):
-        self.spatial_lr_scale = spatial_lr_scale
-        fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
-        fused_colors = torch.tensor(np.asarray(pcd.colors)).float().cuda()
-
-        print("Number of points at initialisation : ", fused_point_cloud.shape[0])
-
-        (self._xyz,
-         self._features_dc,
-         self._features_rest,
-         self._opacity,
-         self._scaling,
-         self._rotation,
-         self._skysphere) = self.params_from_points3d(fused_point_cloud, fused_colors)
-
-        self.statblock.create_stats_vars(self.get_xyz.shape[0])
-
     def training_setup(self, training_args: OptimizationParams):
         self.statblock.create_stats_vars(self._xyz.shape[0])
 
