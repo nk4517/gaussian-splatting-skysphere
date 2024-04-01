@@ -107,7 +107,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                    "rendered_depth": rendered_depth,  # depth
                    "rendered_alpha": rendered_alpha,  # acc
                    "n_touched": n_touched,
-                   "splat_depths": splat_depths
+                   "splat_depths": splat_depths,
+                   "n_dominated": n_dominated,
+                   "dominating_splat": dominating_splat
                    }
 
     if return_normal:
