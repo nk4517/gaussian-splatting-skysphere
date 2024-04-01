@@ -24,7 +24,6 @@ class ModelParams:
     source_path: str = MISSING
     model_path: str = MISSING
     images: str = "images"
-    resolution: int = -1
     white_background: bool = False
     data_device: str = "cuda"
     load_mask: bool = False

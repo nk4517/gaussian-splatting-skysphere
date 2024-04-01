@@ -12,6 +12,7 @@
 import torch
 import numpy as np
 
+from scene.cameras import Camera
 from utils.camera_utils import depth_to_points3d
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation, kl_divergence
 from torch import nn
@@ -24,6 +25,7 @@ from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 
 from pytorch3d.ops import knn_points
+
 
 
 class GaussianModel:
@@ -49,7 +51,8 @@ class GaussianModel:
         self.inverse_skysphere_activation = inverse_sigmoid
 
 
-    def __init__(self, sh_degree: int, divide_ratio: float = 0.8):
+    def __init__(self, sh_degree: int, divide_ratio: float = 0.8, cuda_bug_workaround = False):
+        self.CUDA_BUG_WORKAROUND = cuda_bug_workaround
         self.active_sh_degree = 0
         self.divide_ratio = divide_ratio
         self.max_sh_degree = sh_degree
@@ -255,7 +258,7 @@ class GaussianModel:
         l.append('skysphere')
         return l
 
-    def save_ply(self, path, save_sky=None):
+    def save_ply(self, path, save_sky=None, save_fused=False):
         mkdir_p(os.path.dirname(path))
 
         if save_sky is True:
@@ -269,8 +272,13 @@ class GaussianModel:
         normals = np.zeros_like(xyz)
         f_dc = self._features_dc.detach()[mask].transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest.detach()[mask].transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        opacities = self._opacity.detach()[mask].cpu().numpy()
-        scale = self._scaling.detach()[mask].cpu().numpy()
+        if save_fused:
+            scal, opa = self.get_scal_opa_w_3D
+            opacities = opa.detach()[mask].cpu().numpy()
+            scale = scal.detach()[mask].cpu().numpy()
+        else:
+            opacities = self._opacity.detach()[mask].cpu().numpy()
+            scale = self._scaling.detach()[mask].cpu().numpy()
         rotation = self._rotation.detach()[mask].cpu().numpy()
         skysphere = self._skysphere.detach()[mask].cpu().numpy()
 
@@ -537,8 +545,6 @@ class GaussianModel:
             prune_mask |= big_points_vs | big_points_ws
         self.prune_points(prune_mask)
 
-        torch.cuda.empty_cache()
-
 
     def update_mask_with_KL(self, kl_threshold, selected_pts_mask, op_name="unk"):
         if torch.count_nonzero(selected_pts_mask) == 0:
@@ -651,3 +657,4 @@ class GaussianModel:
         params = self.params_from_points3d(points3d, colors, None, skyness)
         if params is not None:
             self.densification_postfix(*params)
+

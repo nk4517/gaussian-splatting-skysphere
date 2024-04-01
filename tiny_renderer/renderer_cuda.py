@@ -287,14 +287,18 @@ class CUDARenderer(GaussianRenderBase):
 
             sh = scene.gaussians.get_features
             colors = None
+            if self._scale_modifier < 0.02:
+                opa = torch.full_like(scene.gaussians._opacity, fill_value=1e3)
+            else:
+                opa = scene.gaussians.get_opacity_with_3D_filter
 
             color, radii, depth, alpha, _ = rasterizer(
                 means3D=scene.gaussians.get_xyz,
                 means2D=None,
                 shs=sh,
                 colors_precomp=colors,
-                opacities=scene.gaussians.get_opacity,
-                scales=scene.gaussians.get_scaling,
+                opacities=opa,
+                scales=scene.gaussians.get_scaling_with_3D_filter,
                 rotations=scene.gaussians.get_rotation,
                 cov3D_precomp=None
             )

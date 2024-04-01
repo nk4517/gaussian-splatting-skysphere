@@ -17,6 +17,9 @@ class StatBlock:
         self.total_px = 0
         self.associated_color = torch.empty(0)
 
+        self.need_recalc_distF = False
+
+
     def create_stats_vars(self, N):
         self.xyz_gradient_accum = torch.zeros((N, 1), device="cuda")
         self.max_radii2D = torch.zeros(N, dtype=torch.float, device="cuda")
@@ -58,12 +61,14 @@ class StatBlock:
         self.max_radii2D = torch.cat((self.max_radii2D, torch.zeros(N_to_add, device="cuda")), dim=0)
         self.max_screenPct = torch.cat((self.max_screenPct, torch.zeros(N_to_add, device="cuda")), dim=0)
         self.min_depthF = torch.cat((self.min_depthF, torch.full((N_to_add,), fill_value=torch.inf, device="cuda")), dim=0)
-        old_max = self.find_filter3D_old_max()
-        self.filter_3D_sq = torch.cat((self.filter_3D_sq, torch.full((N_to_add, 1), fill_value=old_max, device="cuda")), dim=0)
+        # old_max = self.find_filter3D_old_max()
+        self.filter_3D_sq = torch.cat((self.filter_3D_sq, torch.full((N_to_add, 1), fill_value=torch.inf, device="cuda")), dim=0)
         self.denom = torch.cat((self.denom, torch.zeros((N_to_add, 1), device="cuda")), dim=0)
         self.n_touched_accum = torch.cat((self.n_touched_accum, torch.zeros((N_to_add, 1), device="cuda")), dim=0)
         self.n_dominated_accum = torch.cat((self.n_dominated_accum, torch.zeros((N_to_add, 1), device="cuda")), dim=0)
         self.associated_color = torch.cat((self.associated_color, torch.rand((N_to_add, 3), device="cuda")), dim=0)
+
+        self.need_recalc_distF = N_to_add > 0
 
 
     def find_filter3D_old_max(self):
@@ -130,7 +135,7 @@ class StatBlock:
         if valid.any():
             self.filter_3D_sq[~valid] = self.filter_3D_sq[valid].max()
         else:
-            self.filter_3D_sq[:] = 0
+            self.filter_3D_sq[:] = torch.inf
 
 
 class StatBlockZZZ:

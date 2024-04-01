@@ -23,6 +23,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
+from scene.resolution_controller import ResolutionController
 from utils.loss_utils import l1_loss, ssim, binary_cross_entropy
 from gaussian_renderer import render
 from gaussian_renderer.network_gui import NetworkGUI
@@ -66,7 +67,7 @@ def training(conf: GaussianSplattingConf, debug_from,
     first_iter = 0
     tb_writer = prepare_output_and_logger(conf)
     gaussians = GaussianModel(dataset.sh_degree, divide_ratio=opt.divide_ratio)
-    scene = Scene(dataset, gaussians, load_iteration=progress.load_checkoint or progress.load_gaussians_path)
+    scene = Scene(dataset, gaussians, load_iteration=progress.load_checkoint or progress.load_gaussians_path, resolution_scales=opt.resolution_scales)
     gaussians.training_setup(opt)
 
     if not progress.load_gaussians_path and progress.load_checkoint_path:
@@ -91,12 +92,23 @@ def training(conf: GaussianSplattingConf, debug_from,
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
+    res_controller = ResolutionController(scene, conf)
+    res_controller.start()
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress", dynamic_ncols=True)
     first_iter += 1
+
+    N_full_stacks_done = -1
+    N_full_stacks_processed = 0
+
     for iteration in range(first_iter, opt.iterations + 1):        
+
+        cur_blur_fullres = inverted_logistic(iteration, max_blur, min_blur, midpoint=2500)
+        c2f_phase = cur_blur_fullres > 4
+        cur_blur_rel2cam_res = cur_blur_fullres * cur_cam_res
+
 
         # if network_gui is not None:
         #     with torch.no_grad():
@@ -109,13 +121,25 @@ def training(conf: GaussianSplattingConf, debug_from,
         gaussians.update_learning_rate(iteration)
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
-        if not c2f_phase and iteration % 1000 == 0:
+        if not res_controller.c2f_phase and iteration > 15_000 and iteration % 3000 == 0:
             gaussians.oneupSHdegree()
 
-        # Pick a random Camera
-        if not viewpoint_stack:
-            viewpoint_stack = scene.getTrainCameras().copy()
-        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack) - 1))
+        with torch.no_grad():
+            # Pick a random Camera
+            if not viewpoint_stack:
+                with torch.no_grad():
+                    res_controller.update_blur(iteration)
+                    if res_controller.update_resolution_if_need() or bootstrap1:
+                        gaussians.statblock.on_new_cam_resolution()
+                        gaussians.propagate_depth_sq_to_filter3D(res_controller.trainCameras_filter3d)
+                        bootstrap1 = False
+                    else:
+                        gaussians.statblock.on_new_stack()
+
+
+                N_full_stacks_done += 1
+                viewpoint_stack = scene.getTrainCameras(res_controller.cur_cam_res).copy()
+            viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack) - 1))
 
         # Render
         if (iteration - 1) == debug_from:
@@ -125,8 +149,8 @@ def training(conf: GaussianSplattingConf, debug_from,
 
         #render_pkg = render(viewpoint_cam, gaussians, pipe, bg, return_normal=args.normal_loss)
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg,
-                            return_normal=opt.normal_loss and not c2f_phase,
-                            return_skyness=dataset.load_skymask and not c2f_phase, kernel_size=kernel_size)
+                            return_normal=opt.normal_loss and not res_controller.c2f_phase,
+                            return_skyness=dataset.load_skymask and not res_controller.c2f_phase, kernel_size=kernel_size)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         skyness = render_pkg.get("rendered_skyness")
@@ -154,7 +178,7 @@ def training(conf: GaussianSplattingConf, debug_from,
             gt_mask = None
             gt_mask_bool = None
 
-        if c2f_phase or not opt.silhouette_loss:
+        if res_controller.c2f_phase or not opt.silhouette_loss:
             if opt.masked_image and gt_mask_bool is not None:
                 Ll1 = l1_loss(image[:, gt_mask_bool], gt_image[:, gt_mask_bool])
             else:
@@ -162,7 +186,7 @@ def training(conf: GaussianSplattingConf, debug_from,
 
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image, mask=gt_mask_bool))
 
-        if not c2f_phase:
+        if not res_controller.c2f_phase:
             if opt.silhouette_loss:
 
                 gt_mask_object = (gt_mask > 0.5).repeat(3, 1, 1)
@@ -268,7 +292,7 @@ def training(conf: GaussianSplattingConf, debug_from,
             if not torch.isnan(loss):
                 ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             if iteration % 10 == 0:
-                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{5}f}", "σ": f"{splat_sigma:.2f}"})
+                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{5}f}", "N": f"{gaussians._xyz.shape[0]}", "σ": f"{splat_sigma:.2f}"})
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
@@ -279,8 +303,10 @@ def training(conf: GaussianSplattingConf, debug_from,
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
+            N_unprocessed_fullstacks = N_full_stacks_done - N_full_stacks_processed
+
             # Densification
-            if iteration < opt.densify_until_iter:
+            if iteration < opt.densify_until_iter: # and N_unprocessed_fullstacks > 0:
 
                 gaussians.statblock.add_densification_stats(
                     viewspace_point_tensor, visibility_filter,
@@ -295,9 +321,18 @@ def training(conf: GaussianSplattingConf, debug_from,
                     min_opacity = 0.05 if not c2f_phase else 0.01
                     gaussians.densify_and_prune(opt.densify_grad_threshold, min_opacity, scene.cameras_extent, size_threshold,
                                                 kl_threshold=opt.kl_threshold, skysphere_radius=opt.skysphere_radius)
+
+                    gaussians.propagate_depth_sq_to_filter3D(res_controller.trainCameras_filter3d)
+
+                    torch.cuda.empty_cache()
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
+
+            if iteration % 500 == 0 and iteration > opt.densify_until_iter:
+                if iteration < opt.iterations - 500:
+                    # don't update in the end of training
+                    gaussians.propagate_depth_sq_to_filter3D(res_controller.trainCameras_filter3d)
 
             # Optimizer step
             if iteration < opt.iterations:
