@@ -10,19 +10,15 @@
 #
 
 import torch
+from torch import nn
+from pytorch3d.ops import knn_points
+from simple_knn._C import distCUDA2
 
 from arguments import OptimizationParams
-from scene.cameras import Camera
 from scene.stat_block import StatBlock
 from utils.camera_utils import depth_to_points3d
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation, kl_divergence, strip_symmetric, build_scaling_rotation, stoch1
-from torch import nn, Tensor
 from utils.sh_utils import RGB2SH
-from simple_knn._C import distCUDA2
-from utils.general_utils import strip_symmetric, build_scaling_rotation
-
-from pytorch3d.ops import knn_points
-
 
 
 class BaseGaussianModel:
