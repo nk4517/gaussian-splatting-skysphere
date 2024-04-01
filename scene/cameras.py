@@ -86,6 +86,8 @@ class MiniCamKRT(nn.Module):
         self.full_proj_transform: torch.Tensor = None
         self.camera_center: torch.Tensor = None
 
+        self.fru1: FRU1 = None
+
         self.init_derived()
 
 
@@ -106,6 +108,9 @@ class MiniCamKRT(nn.Module):
             self.data_device)
         self.full_proj_transform = self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0)).squeeze(0).to(self.data_device)
         self.camera_center = self.world_view_transform.inverse()[3, :3].to(self.data_device)
+
+        self.fru1 = FRU1(self)
+
 
 
     def points_W2C(self, points3d):
@@ -264,7 +269,7 @@ class FRU1:
     def frustum_world(self, points_cam):
         # Calculate dot products between normals and points. Since normals are inward, a negative result indicates a point outside the frustrum.
 
-        dots_ = rotate_halfplanes_and_check_is_inside(points_cam, self.frustum_halfplanes, self.R, self.camera_center)
+        dots_ = rotate_halfplanes_and_check_is_inside(points_cam, self.frustum_halfplanes, self.cam.R, self.cam.camera_center)
         return torch.all(dots_, axis=0)
 
     #
