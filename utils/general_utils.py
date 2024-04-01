@@ -224,3 +224,9 @@ def pseudo_normals_from_depthmap_gradient(depth_map):
     ], dim=0)
 
     return n_i
+
+
+@torch.jit.script
+def stoch1(prune_mask, pct=0.75):
+    prune_mask &= torch.rand(prune_mask.shape[0], device=prune_mask.device) < pct
+    return prune_mask
