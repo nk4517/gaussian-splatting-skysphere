@@ -122,21 +122,22 @@ def pseudocolor_from_splat_orientation(scene, viewpoint_camera: Camera | MiniCam
 
     means3D = scene.gaussians.get_xyz
     rot = scene.gaussians.get_rotation
-    scal, opa = scene.gaussians.get_scal_opa_w_3D
+    scales = scene.gaussians.get_scaling
 
     rotations_mat = build_rotation(rot)
-
-    # scales = scene.gaussians.get_scaling
-
-    min_scales = torch.argmin(scal, dim=1)
+    min_scales = torch.argmin(scales, dim=1)
     indices = torch.arange(min_scales.shape[0])
     normal = rotations_mat[indices, :, min_scales]
 
     # convert normal direction to the camera; calculate the normal in the camera coordinate
-    view_dir = means3D - viewpoint_camera.camera_center
-    normal = normal * ((((view_dir * normal).sum(dim=-1) < 0) * 1 - 0.5) * 2)[..., None]
+    view_dir = means3D - viewpoint_camera.camera_center[None, ...]
+    view_dir /= view_dir.norm(dim=1)[..., None]
 
-    R_w2c = viewpoint_camera.R.T
+    to_inv = (view_dir * normal).sum(dim=-1) < 0
+    normal[to_inv] *= -1
+
+
+    R_w2c = viewpoint_camera.R # GLM
     normal = (R_w2c @ normal.transpose(0, 1)).transpose(0, 1)
 
     colors = normal / 2 + 0.5
