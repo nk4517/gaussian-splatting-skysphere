@@ -137,15 +137,19 @@ class GaussianModel:
             self.active_sh_degree += 1
 
     def params_from_points3d(self, points3d, colors, dist2=None, skyness=0.5):
-        if points3d.shape[0] < 3:
-            return
         assert points3d.isfinite().all()
 
         if dist2 is None:
-            dist2 = distCUDA2(points3d)[0]
-            # else:
-            #     # бывает, что единственная точка, да
-            #     dist2 = torch.tensor([1,], dtype=torch.float32, device=points3d.device)
+            cur_pts3d = self.get_xyz
+            if cur_pts3d.shape[0] > 0:
+                pts3d1 = torch.cat((points3d, cur_pts3d), dim=0)
+            else:
+                pts3d1 = points3d
+
+            if pts3d1.shape[0] < 3:
+                return
+
+            dist2 = distCUDA2(pts3d1)[0][:points3d.shape[0]]
 
         # dist2[~dist2.isfinite()] = 1
 
