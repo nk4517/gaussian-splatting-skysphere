@@ -86,6 +86,7 @@ class OptimizationParams:
 
     iterations: int = 30_000
 
+    # задаётся в виде множителя cam_extent
     depth_threshold: float | None = 0.37
 
     position_lr_init: float = 0.00016
