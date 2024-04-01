@@ -119,6 +119,11 @@ class OptimizationParams(ParamGroup):
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
         self.random_background = False
+        # выделение объектов по силуэту
+        self.silhouette_loss = False
+        self.silhouette_loss_type: Literal["bce", "mce"] = "bce"
+        self.lambda_silhouette = 2.5 # use bce loss for silhouette
+
         self.kl_threshold = 0.4
         super().__init__(parser, "Optimization Parameters")
 
