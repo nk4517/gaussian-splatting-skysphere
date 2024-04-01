@@ -229,7 +229,9 @@ class BaseGaussianModel:
             {'params': [self._skysphere], 'lr': training_args.skysphere_lr, "name": "skysphere"},
         ]
 
-        self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+        # self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+        self.optimizer = torch.optim.Adam(l, amsgrad=True)
+
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
@@ -284,6 +286,8 @@ class BaseGaussianModel:
                 stored_state = self.optimizer.state.get(group['params'][0], None)
                 stored_state["exp_avg"] = torch.zeros_like(tensor)
                 stored_state["exp_avg_sq"] = torch.zeros_like(tensor)
+                if "max_exp_avg_sq" in stored_state: # для AMSGrad
+                    stored_state["max_exp_avg_sq"] = torch.zeros_like(tensor)
 
                 del self.optimizer.state[group['params'][0]]
                 group["params"][0] = nn.Parameter(tensor.requires_grad_(True))
@@ -299,6 +303,8 @@ class BaseGaussianModel:
             if stored_state is not None:
                 stored_state["exp_avg"] = stored_state["exp_avg"][mask]
                 stored_state["exp_avg_sq"] = stored_state["exp_avg_sq"][mask]
+                if "max_exp_avg_sq" in stored_state: # для AMSGrad
+                    stored_state["max_exp_avg_sq"] = stored_state["max_exp_avg_sq"][mask]
 
                 del self.optimizer.state[group['params'][0]]
                 group["params"][0] = nn.Parameter((group["params"][0][mask].requires_grad_(True)))
@@ -335,6 +341,8 @@ class BaseGaussianModel:
 
                 stored_state["exp_avg"] = torch.cat((stored_state["exp_avg"], torch.zeros_like(extension_tensor)), dim=0)
                 stored_state["exp_avg_sq"] = torch.cat((stored_state["exp_avg_sq"], torch.zeros_like(extension_tensor)), dim=0)
+                if "max_exp_avg_sq" in stored_state: # для AMSGrad
+                    stored_state["max_exp_avg_sq"] = torch.cat((stored_state["max_exp_avg_sq"], torch.zeros_like(extension_tensor)), dim=0).contiguous()
 
                 del self.optimizer.state[group['params'][0]]
                 group["params"][0] = nn.Parameter(torch.cat((group["params"][0], extension_tensor), dim=0).requires_grad_(True))
