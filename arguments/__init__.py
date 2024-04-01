@@ -16,7 +16,14 @@ from omegaconf import MISSING
 
 @dataclass
 class ModelParams:
-    sh_degree: int = 3
+    sh_degree: int = 0
+
+    resolution_scales: tuple = (1.0, 1/4)
+    resolution_scales_bw: tuple = (1/4,)
+
+    agisoft_calibs: bool = False
+    waymo_calibs: bool = False
+    dreamer_calibs: bool = False
 
     N_random_init_pts: int | None = None
     spatial_scaling_lr_mult: float = 1
@@ -76,7 +83,10 @@ class ProgressParams:
 
 @dataclass
 class OptimizationParams:
+
     iterations: int = 30_000
+
+    depth_threshold: float | None = 0.37
 
     position_lr_init: float = 0.00016
     position_lr_final: float = 0.0000016

@@ -213,7 +213,7 @@ class BaseGaussianModel:
 
         self.statblock.create_stats_vars(self.get_xyz.shape[0])
 
-    def training_setup(self, training_args):
+    def training_setup(self, training_args: OptimizationParams):
         self.statblock.create_stats_vars(self._xyz.shape[0])
 
         self.percent_dense = training_args.percent_dense
