@@ -243,7 +243,22 @@ class SimpleGUI(CamNaka):
         if self.scene is not None:
             self.cams_widget()
 
+        self.rendermodues_widget()
+
         imgui.end()
+
+
+    def rendermodues_widget(self):
+        rmodes_ids = tuple(self.g_renderer.render_modes.values())
+        rmodes_names = list(self.g_renderer.render_modes.keys())
+        try:
+            rmode_idx = rmodes_ids.index(self.g_renderer.render_mode)
+        except ValueError:
+            rmode_idx = len(rmodes_ids) - 1
+        changed, rmode_idx = imgui.combo("shading", rmode_idx, rmodes_names)
+        if changed:
+            g_render_mode = rmodes_ids[rmode_idx]
+            self.g_renderer.set_render_mode(g_render_mode)
 
 
     def cams_widget(self):
