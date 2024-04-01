@@ -193,6 +193,7 @@ def pseudocolor_from_depth_gradient(depth):
 
 
 class CUDARenderer(GaussianRenderBase):
+    RENDERMODE_SKYNESS = -8
     RENDERMODE_LEARNING_GRADIENT = -7
     RENDERMODE_DOMINATION = -6
     RENDERMODE_BLURINESS = -5
@@ -202,6 +203,7 @@ class CUDARenderer(GaussianRenderBase):
     RENDERMODE_NORMALS_PSEUDOCOLORS = -2
 
     render_modes = OrderedDict([
+        ("Skyness", RENDERMODE_SKYNESS),
         ("Learning gradient", RENDERMODE_LEARNING_GRADIENT),
         ("Domination", RENDERMODE_DOMINATION),
         ("Bluriness", RENDERMODE_BLURINESS),
@@ -345,8 +347,15 @@ class CUDARenderer(GaussianRenderBase):
             return
 
         override_colors = None
+        skyness = scene.gaussians.get_skysphere
         if self.render_mode == self.RENDERMODE_NORMALS_PSEUDOCOLORS:
             override_colors = pseudocolor_from_splat_orientation(scene, viewpoint_camera)
+
+        elif self.render_mode == self.RENDERMODE_SKYNESS:
+            override_colors = torch.full((skyness.shape[0], 3), 0.5, device=skyness.device)
+            override_colors[..., 0] = 1 - skyness.squeeze(1)
+            override_colors[..., 1] = (skyness.squeeze(1) - 0.5).abs()
+            override_colors[..., 2] = skyness.squeeze(1)
 
         color, radii, depth, alpha, n_touched, splat_depths, n_dominated, dominating_splat = self.render111(scene, viewpoint_camera, override_colors=override_colors)
 
