@@ -14,7 +14,7 @@ from utils.waymo_utils import WaymoCoordsHelper
 inv = np.linalg.inv
 
 
-def readWaymoExportInfo(path: str | Path, eval, llffhold=8, load_skymask=False, SLV_initial_gaussians=True):
+def readWaymoExportInfo_0(path: str | Path, eval, llffhold=8, load_skymask=False, SLV_initial_gaussians=True):
     """
     Reads information from a Waymo dataset export.
     The dataset is expected to have images, lidar, and optional skymask folders.
@@ -190,6 +190,138 @@ def readWaymoExportInfo(path: str | Path, eval, llffhold=8, load_skymask=False, 
             colors=np.ascontiguousarray(colors, dtype=np.float32),
         )
         # pcd_all = BasicPointCloud(points=np.zeros((1, 3)), normals=np.zeros((1,3)), colors=np.zeros((1,3)))
+
+        pp = open3d.geometry.PointCloud(open3d.utility.Vector3dVector(pcd_all.points))
+        pp.colors = open3d.utility.Vector3dVector(pcd_all.colors)
+        open3d.io.write_point_cloud("naka.ply", pp)
+        print(1)
+
+    if SLV_initial_gaussians > 0:
+        num_pts = SLV_initial_gaussians
+
+        cam_pos = []
+        for k in train_cam_infos:
+            C = -np.matmul(k.R, k.T)
+            cam_pos.append(C)
+        cam_pos = np.array(cam_pos)
+        min_cam_pos = np.min(cam_pos)
+        max_cam_pos = np.max(cam_pos)
+        mean_cam_pos = (min_cam_pos + max_cam_pos) / 2.0
+        cube_mean = (max_cam_pos - min_cam_pos) * 1.5
+
+        max_coord = (max_cam_pos - min_cam_pos) * 3 - (cube_mean - mean_cam_pos)
+        xyz = np.random.random((num_pts, 3)) * max_coord
+        print(f"Generating SLV point cloud ({num_pts})...")
+
+        shs = np.random.random((num_pts, 3))
+        pcd_all = BasicPointCloud(points=xyz, colors=shs, normals=np.zeros((num_pts, 3)))
+
+
+    scene_info = SceneInfo(point_cloud=pcd_all,
+                           train_cameras=train_cam_infos,
+                           test_cameras=test_cam_infos,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path)
+
+    return scene_info
+
+
+def readWaymoExportInfo(path: str | Path, eval, llffhold=8, load_skymask=False, SLV_initial_gaussians=True):
+
+    load_ply = not SLV_initial_gaussians > 0
+
+    path = Path(path).absolute()
+
+    # Initialize camera and point cloud information lists
+    train_cam_infos = []
+    test_cam_infos = []
+    all_points = []
+
+    camera_angles_ALL = ["FRONT", "FRONT_LEFT", "FRONT_RIGHT", "SIDE_LEFT", "SIDE_RIGHT"]
+    camera_angles = ["FRONT",]
+
+    ids_to_load = range(0, 197)
+
+    for frame_id in ids_to_load:
+
+        for waymo_cam in camera_angles:
+
+            img_path = path / waymo_cam / f"{frame_id:04d}.png"
+            xmp_path = path / waymo_cam / f"{frame_id:04d}.xmp"
+
+            if not img_path.is_file() or not xmp_path.is_file():
+                continue
+
+            img = cv2.imread(str(img_path), cv2.IMREAD_UNCHANGED)
+
+            with open(xmp_path, "rt") as fl:
+                from waymo_rc_dump import parse_RC_xml
+
+                K, d, R, t, C = parse_RC_xml(fl.read(), img.shape[1], img.shape[0])
+
+            W2C_xform = np.eye(4)
+            W2C_xform[:3, :3] = R
+            W2C_xform[:3, 3] = t
+
+            skymask = None
+
+            # assert w == image.shape[1] and h == image.shape[0]
+            print("T:", np.round(C, 3))
+
+            # image_new = cv2.cvtColor(image_new, cv2.COLOR_BGRA2RGBA)
+            # image_new = Image.fromarray(image_new)
+
+            image_new = Image.open(img_path)
+            K_new = K
+            w2c = W2C_xform
+
+            R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
+            T = w2c[:3, 3]
+
+            fx = K_new[0, 0]
+            fy = K_new[1, 1]
+            cx = K_new[0, 2]
+            cy = K_new[1, 2]
+            intrin = np.array((fx, fy, cx, cy), dtype=np.float32)
+
+            new_w = image_new.width
+            new_h = image_new.height
+
+            HFov = focal2fov(fx, new_w)
+            VFov = focal2fov(fy, new_h)
+
+            # if waymo_cam ==  "FRONT":
+            cam_name = img_path.relative_to(path).with_suffix("").as_posix()
+            cam_info = CameraInfo(uid=frame_id*10+camera_angles_ALL.index(waymo_cam)+1, R=R, T=T, FovY=VFov, FovX=HFov, image=image_new,
+                                  image_path=str(img_path.absolute()), image_name=cam_name, width=new_w, height=new_h,
+                                  intrinsics=intrin, sky_mask=skymask)
+
+            # if waymo_cam == "FRONT":
+            # # Split into training and testing based on llffhold
+            if frame_id % llffhold == 0:
+                test_cam_infos.append(cam_info)
+            # else:
+            train_cam_infos.append(cam_info)
+
+    nerf_normalization = getNerfppNorm(train_cam_infos)
+
+    ply_path = r"X:\_ai\_waymo\tensorflow_extractor\colmap_proj-single\ZZinput.ply"
+
+    if load_ply:
+
+        from waymo_visualize import read_xyzrgb
+
+        xyz, rgb = read_xyzrgb(r"x:\_ai\_waymo\tensorflow_extractor\for_colmap\111.xyzrgb")
+
+        pts = xyz
+        colors = rgb / np.float32(256)
+        normals = np.zeros_like(xyz)
+
+        pcd_all = BasicPointCloud(
+            points=np.ascontiguousarray(pts, dtype=np.float32),
+            normals=np.ascontiguousarray(normals, dtype=np.float32),
+            colors=np.ascontiguousarray(colors, dtype=np.float32),
+        )
 
         pp = open3d.geometry.PointCloud(open3d.utility.Vector3dVector(pcd_all.points))
         pp.colors = open3d.utility.Vector3dVector(pcd_all.colors)
