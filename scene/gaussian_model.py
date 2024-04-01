@@ -28,7 +28,7 @@ from pytorch3d.ops import knn_points
 
 
 
-class GaussianModel:
+class BaseGaussianModel:
 
     def setup_functions(self):
         def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
@@ -258,37 +258,6 @@ class GaussianModel:
         l.append('skysphere')
         return l
 
-    def save_ply(self, path, save_sky=None, save_fused=False):
-        mkdir_p(os.path.dirname(path))
-
-        if save_sky is True:
-            mask = (self.get_skysphere > 0.5).squeeze()
-        elif save_sky is False:
-            mask = (self.get_skysphere <= 0.5).squeeze()
-        else:
-            mask = torch.ones_like(self._skysphere, dtype=torch.bool).squeeze()
-
-        xyz = self._xyz.detach()[mask].cpu().numpy()
-        normals = np.zeros_like(xyz)
-        f_dc = self._features_dc.detach()[mask].transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        f_rest = self._features_rest.detach()[mask].transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        if save_fused:
-            scal, opa = self.get_scal_opa_w_3D
-            opacities = opa.detach()[mask].cpu().numpy()
-            scale = scal.detach()[mask].cpu().numpy()
-        else:
-            opacities = self._opacity.detach()[mask].cpu().numpy()
-            scale = self._scaling.detach()[mask].cpu().numpy()
-        rotation = self._rotation.detach()[mask].cpu().numpy()
-        skysphere = self._skysphere.detach()[mask].cpu().numpy()
-
-        dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
-
-        elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation, skysphere), axis=1)
-        elements[:] = list(map(tuple, attributes))
-        el = PlyElement.describe(elements, 'vertex')
-        PlyData([el]).write(path)
 
     def reset_opacity(self, drop_to=0.01):
 
@@ -306,58 +275,6 @@ class GaussianModel:
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new_p,"opacity")
 
         self._opacity = optimizable_tensors["opacity"]
-
-    def load_ply(self, path):
-        plydata = PlyData.read(path)
-
-        xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
-                        np.asarray(plydata.elements[0]["y"]),
-                        np.asarray(plydata.elements[0]["z"])),  axis=1)
-        opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
-        skysphere = np.asarray(plydata.elements[0]["skysphere"])[..., np.newaxis]
-
-        features_dc = np.zeros((xyz.shape[0], 3, 1))
-        features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
-        features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
-        features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
-
-        extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
-        extra_f_names = sorted(extra_f_names, key = lambda x: int(x.split('_')[-1]))
-
-        num_extra_f = len(extra_f_names)
-        assert num_extra_f % 3 == 0
-        sh_degree = int((((num_extra_f // 3) + 1) ** 0.5) - 1)
-        assert num_extra_f == 3 * (sh_degree + 1) ** 2 - 3
-
-        features_extra = np.zeros((xyz.shape[0], len(extra_f_names)))
-        for idx, attr_name in enumerate(extra_f_names):
-            features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
-        # Reshape (P,F*SH_coeffs) to (P, F, SH_coeffs except DC)
-        features_extra = features_extra.reshape((features_extra.shape[0], 3, (sh_degree + 1) ** 2 - 1))
-
-        scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
-        scale_names = sorted(scale_names, key = lambda x: int(x.split('_')[-1]))
-        scales = np.zeros((xyz.shape[0], len(scale_names)))
-        for idx, attr_name in enumerate(scale_names):
-            scales[:, idx] = np.asarray(plydata.elements[0][attr_name])
-
-        rot_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("rot")]
-        rot_names = sorted(rot_names, key = lambda x: int(x.split('_')[-1]))
-        rots = np.zeros((xyz.shape[0], len(rot_names)))
-        for idx, attr_name in enumerate(rot_names):
-            rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
-
-        self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
-        self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
-        self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
-        self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
-        self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
-        self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
-        self._skysphere = nn.Parameter(torch.tensor(skysphere, dtype=torch.float, device="cuda").requires_grad_(True))
-
-        self.active_sh_degree = sh_degree
-
-        self.statblock.create_stats_vars(self.get_xyz.shape[0])
 
 
     def replace_tensor_to_optimizer(self, tensor, name):

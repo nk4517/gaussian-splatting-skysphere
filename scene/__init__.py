@@ -13,9 +13,13 @@ import os
 from pathlib import Path
 import random
 import json
+
+import torch
+
+from scene.gaussian_model_mip import GaussianModel
 from utils.system_utils import searchForMaxIteration
 from scene.dataset_readers import sceneLoadTypeCallbacks
-from scene.gaussian_model import GaussianModel
+from scene.gaussian_model_w_save import save_gaussians_ply, load_gaussians_ply, init_gaussians_from_pcd
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 
@@ -89,17 +93,17 @@ class Scene:
             else:
                 raise NotImplementedError("loaded_iter: " + repr(self.loaded_iter))
 
-            self.gaussians.load_ply(ply_fname)
+            load_gaussians_ply(self.gaussians, ply_fname)
         else:
-            self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent * args.spatial_scaling_lr_mult)
+            init_gaussians_from_pcd(self.gaussians, scene_info.point_cloud, self.cameras_extent * args.spatial_scaling_lr_mult)
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
-        self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
+        save_gaussians_ply(self.gaussians, os.path.join(point_cloud_path, "point_cloud.ply"))
 
         have_sky = bool(torch.any(self.gaussians.get_skysphere > 0.6))
         if have_sky:
-            self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud_wo_sky.ply"), save_sky=False)
+            save_gaussians_ply(self.gaussians, os.path.join(point_cloud_path, "point_cloud_wo_sky.ply"), save_sky=False)
 
     def getTrainCameras(self, scale=1.0):
         return self.train_cameras[scale]
