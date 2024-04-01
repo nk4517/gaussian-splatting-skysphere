@@ -18,7 +18,7 @@ from utils.general_utils import build_rotation
 import torch.nn.functional as F
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None,
-           return_normal=False, return_skyness=False, kernel_size: float=0.3):
+           return_normal=False, return_skyness=False, kernel_size: float=0.3, depth_threshold = None):
     """
     Render the scene.
     """
@@ -50,6 +50,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         sh_degree=pc.active_sh_degree,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
+        depth_threshold=depth_threshold,
         debug=pipe.debug
     )
 
@@ -87,7 +88,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
-    rendered_image, radii, rendered_depth, rendered_alpha, n_touched = rasterizer(
+    rendered_image, radii, rendered_depth, rendered_alpha, n_touched, splat_depths = rasterizer(
         means3D=means3D,
         means2D=means2D,
         shs=shs,
@@ -105,7 +106,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
                    "radii": radii,
                    "rendered_depth": rendered_depth,  # depth
                    "rendered_alpha": rendered_alpha,  # acc
-                   "n_touched": n_touched
+                   "n_touched": n_touched,
+                   "splat_depths": splat_depths
                    }
 
     if return_normal:
@@ -136,8 +138,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     if False:
         density = torch.ones_like(means3D)
-  
-        render_opacity, _, _, _ = rasterizer(
+
+        render_opacity, _, _, _, _, _ = rasterizer(
             means3D = means3D,
             means2D = means2D,
             shs = None,
@@ -168,12 +170,13 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             sh_degree=pc.active_sh_degree,
             campos=viewpoint_camera.camera_center,
             prefiltered=False,
+            depth_threshold=depth_threshold,
             debug=pipe.debug
         )
 
         rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
-        render_skyness, _, _, _, _ = rasterizer(
+        render_skyness, _, _, _, _, _ = rasterizer(
             means3D=means3D,
             means2D=means2D,
             shs=None,
