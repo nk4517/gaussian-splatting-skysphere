@@ -91,7 +91,7 @@ class Scene:
 
             self.gaussians.load_ply(ply_fname)
         else:
-            self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+            self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent * args.spatial_scaling_lr_mult)
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
