@@ -320,6 +320,50 @@ def training(conf: GaussianSplattingConf, debug_from,
                     cos_normal = (1. - torch.sum(rendered_normal * normal_gt, dim = 0))[filter_mask].mean()
                     loss += opt.lambda_l1_normal * l1_normal + opt.lambda_cos_normal * cos_normal
 
+
+            if opt.mono_loss and hasattr(viewpoint_cam, "depth") and viewpoint_cam.depth is not None:
+
+                render_mask = torch.where(alpha_img > 0.5, True, False)
+                mask = render_mask
+                if opt.skysphere_loss:
+                    gt_mask = ~sky_select  # torch.where(viewpoint_cam.mask > 0.5, True, False)
+                    mask &= gt_mask
+
+                if torch.count_nonzero(mask) > 10:
+                    moonodepth = viewpoint_cam.depth.cuda().unsqueeze(0)
+                    redner_depth = render_pkg["rendered_depth"]
+
+                    depth_mono = moonodepth[mask].clamp(1e-6)
+                    depth_render = redner_depth[mask].clamp(1e-6)
+
+                    if opt.mono_loss_type == "mid":
+                        depth_loss = monodisp(1 / depth_mono, 1 / depth_render, 'l1')[-1]
+
+                    elif opt.mono_loss_type == "pearson":
+
+                        # depth_loss = torch.min(
+                        #     (1 - pearson_corrcoef(- depth_mono, depth_render)),
+                        #     (1 - pearson_corrcoef(1 / (depth_mono + 200.), depth_render))
+                        # )
+
+                        disp_mono = 1 / depth_mono
+                        disp_render = 1 / depth_render
+                        depth_loss = (1 - pearson_corrcoef(disp_render, -disp_mono)).mean()
+
+
+                    else:
+                        disp_mono = 1 / viewpoint_cam.depth.cuda()[mask.squeeze()].clamp(1e-6)  # shape: [N]
+                        disp_render = 1 / render_pkg["rendered_depth"][mask].clamp(1e-6)  # shape: [N]
+                        depth_loss = monodisp(disp_mono, disp_render, 'l1')[-1]
+                elif mono_loss_type == "pearson":
+                    disp_mono = 1 / viewpoint_cam.mono_depth[viewpoint_cam.mask > 0.5].clamp(1e-6)  # shape: [N]
+                    disp_render = 1 / render_pkg["rendered_depth"][viewpoint_cam.mask > 0.5].clamp(1e-6)  # shape: [N]
+                    depth_loss = (1 - pearson_corrcoef(disp_render, -disp_mono)).mean()
+                else:
+                    raise NotImplementedError
+
+                loss = loss + opt.lambda_mono_depth * depth_loss
+
         loss.backward()
         iter_end.record()
 
