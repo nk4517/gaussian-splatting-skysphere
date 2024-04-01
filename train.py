@@ -89,7 +89,7 @@ def training(dataset, opt: OptimizationParams, pipe: PipelineParams,
 
         #render_pkg = render(viewpoint_cam, gaussians, pipe, bg, return_normal=args.normal_loss)
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg, 
-                            return_normal=opt.normal_loss, return_opacity=True, return_depth=opt.depth_loss or opt.depth2normal_loss)
+                            return_normal=opt.normal_loss, return_skyness=True)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         # # opacity mask

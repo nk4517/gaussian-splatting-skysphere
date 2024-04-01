@@ -18,11 +18,13 @@ from utils.general_utils import build_rotation
 import torch.nn.functional as F
 
 def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None,
-           return_depth = False, return_normal = False, return_opacity = False, return_skyness=False):
+           return_normal=False, return_skyness=False, kernel_size: float=0.3):
     """
-    Render the scene. 
+    Render the scene.
     """
- 
+
+    bg_color = bg_color.to(pc.get_xyz.device)
+
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
     screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
     try:
@@ -39,10 +41,12 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         image_width=int(viewpoint_camera.image_width),
         tanfovx=tanfovx,
         tanfovy=tanfovy,
+        kernel_size=kernel_size,
         bg=bg_color,
         scale_modifier=scaling_modifier,
         viewmatrix=viewpoint_camera.world_view_transform,
         projmatrix=viewpoint_camera.full_proj_transform,
+        projmatrix_raw=viewpoint_camera.projection_matrix,
         sh_degree=pc.active_sh_degree,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
@@ -82,41 +86,28 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     else:
         colors_precomp = override_color
 
-    # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii = rasterizer(
-        means3D = means3D,
-        means2D = means2D,
-        shs = shs,
-        colors_precomp = colors_precomp,
-        opacities = opacity,
-        scales = scales,
-        rotations = rotations,
-        cov3D_precomp = cov3D_precomp)
+    # Rasterize visible Gaussians to image, obtain their radii (on screen).
+    rendered_image, radii, rendered_depth, rendered_alpha, n_touched = rasterizer(
+        means3D=means3D,
+        means2D=means2D,
+        shs=shs,
+        colors_precomp=colors_precomp,
+        opacities=opacity,
+        scales=scales,
+        rotations=rotations,
+        cov3D_precomp=cov3D_precomp)
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
-    return_dict =  {"render": rendered_image,
-            "viewspace_points": screenspace_points,
-            "visibility_filter" : radii > 0,
-            "radii": radii}
+    return_dict = {"render": rendered_image,
+                   "viewspace_points": screenspace_points,
+                   "visibility_filter": radii > 0,
+                   "radii": radii,
+                   "rendered_depth": rendered_depth,  # depth
+                   "rendered_alpha": rendered_alpha,  # acc
+                   "n_touched": n_touched
+                   }
 
-    if return_depth:
-        projvect1 = viewpoint_camera.world_view_transform[:,2][:3].detach()
-        projvect2 = viewpoint_camera.world_view_transform[:,2][-1].detach()
-        means3D_depth = (means3D * projvect1.unsqueeze(0)).sum(dim=-1,keepdim=True) + projvect2
-        means3D_depth = means3D_depth.repeat(1,3)
-        render_depth, _ = rasterizer(
-            means3D = means3D,
-            means2D = means2D,
-            shs = None,
-            colors_precomp = means3D_depth,
-            opacities = opacity,
-            scales = scales,
-            rotations = rotations,
-            cov3D_precomp = cov3D_precomp)
-        render_depth = render_depth.mean(dim=0) 
-        return_dict.update({'render_depth': render_depth})
-    
     if return_normal:
         rotations_mat = build_rotation(rotations)
         scales = pc.get_scaling
@@ -131,7 +122,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         R_w2c = viewpoint_camera.R.T
         normal = (R_w2c @ normal.transpose(0, 1)).transpose(0, 1)
   
-        render_normal, _ = rasterizer(
+        render_normal, _, _, _ = rasterizer(
             means3D = means3D,
             means2D = means2D,
             shs = None,
@@ -141,12 +132,12 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             rotations = rotations,
             cov3D_precomp = cov3D_precomp)
         render_normal = F.normalize(render_normal, dim = 0)
-        return_dict.update({'render_normal': render_normal})
+        return_dict.update({'rendered_normal': render_normal})
 
-    if return_opacity:
+    if False:
         density = torch.ones_like(means3D)
   
-        render_opacity, _ = rasterizer(
+        render_opacity, _, _, _ = rasterizer(
             means3D = means3D,
             means2D = means2D,
             shs = None,
@@ -155,7 +146,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             scales = scales,
             rotations = rotations,
             cov3D_precomp = cov3D_precomp)
-        return_dict.update({'render_opacity': render_opacity.mean(dim=0)})
+        return_dict.update({'rendered_opacity': render_opacity.mean(dim=0)})
 
 
     if return_skyness:
@@ -168,10 +159,12 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             image_width=int(viewpoint_camera.image_width),
             tanfovx=tanfovx,
             tanfovy=tanfovy,
+            kernel_size=kernel_size,
             bg=bg_color, # <<<<<<<<<<<<<<<<
             scale_modifier=scaling_modifier,
             viewmatrix=viewpoint_camera.world_view_transform,
             projmatrix=viewpoint_camera.full_proj_transform,
+            projmatrix_raw=viewpoint_camera.projection_matrix,
             sh_degree=pc.active_sh_degree,
             campos=viewpoint_camera.camera_center,
             prefiltered=False,
@@ -180,7 +173,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
         rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
-        render_skyness, _, _, _ = rasterizer(
+        render_skyness, _, _, _, _ = rasterizer(
             means3D=means3D,
             means2D=means2D,
             shs=None,
