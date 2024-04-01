@@ -28,7 +28,7 @@ class Scene:
     gaussians : GaussianModel
 
     def __init__(self, args: ModelParams, gaussians: GaussianModel,
-                 load_iteration: int | str | Path | None = None, shuffle=True, resolution_scales=[1.0]):
+                 load_iteration: int | str | Path | None = None, shuffle=True):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -93,11 +93,12 @@ class Scene:
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
-        for resolution_scale in resolution_scales:
-            print("Loading Training Cameras")
-            self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
-            print("Loading Test Cameras")
-            self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
+        for resolution_scale in args.resolution_scales:
+            resolution_scale_real = resolution_scale # / args.resolution
+            print(f"Loading Training Cameras 1/{1/resolution_scale_real:.1f}")
+            self.train_cameras[resolution_scale_real] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
+            print(f"Loading Test Cameras 1/{1/resolution_scale_real:.1f}")
+            self.test_cameras[resolution_scale_real] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
 
         if self.loaded_iter:
             if isinstance(self.loaded_iter, int):
@@ -119,8 +120,12 @@ class Scene:
         if have_sky:
             save_gaussians_ply(self.gaussians, os.path.join(point_cloud_path, "point_cloud_wo_sky.ply"), save_sky=False)
 
-    def getTrainCameras(self, scale=1.0):
+    def getTrainCameras(self, scale=None):
+        if scale is None:
+            scale = max(self.train_cameras.keys())
         return self.train_cameras[scale]
 
-    def getTestCameras(self, scale=1.0):
+    def getTestCameras(self, scale=None):
+        if scale is None:
+            scale = max(self.train_cameras.keys())
         return self.test_cameras[scale]

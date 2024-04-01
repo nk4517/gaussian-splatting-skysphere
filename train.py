@@ -83,7 +83,7 @@ def training(conf: GaussianSplattingConf, debug_from,
     first_iter = 0
     tb_writer = prepare_output_and_logger(conf)
     gaussians = GaussianModel(dataset.sh_degree, divide_ratio=opt.divide_ratio)
-    scene = Scene(dataset, gaussians, load_iteration=progress.load_checkoint or progress.load_gaussians_path, resolution_scales=opt.resolution_scales)
+    scene = Scene(dataset, gaussians, load_iteration=progress.load_checkoint or progress.load_gaussians_path)
     gaussians.training_setup(opt)
 
     if not progress.load_gaussians_path and progress.load_checkoint_path:
