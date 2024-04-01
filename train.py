@@ -420,8 +420,8 @@ def training(conf: GaussianSplattingConf, debug_from,
                             print(f"fft_lowpass_sigma: {fft_lowpass_sigma:.4f}")
 
                     res_scale = viewpoint_cam.image_width / 1920
-                    size_threshold = 20 * res_scale if iteration > opt.opacity_reset_interval and not c2f_phase else None
-                    min_opacity = 0.05 if not c2f_phase else 0.01
+                    size_threshold = 20 * res_scale if opacity_reset_phase and not res_controller.c2f_phase else None
+                    min_opacity = 0.05 if not res_controller.c2f_phase else 0.01
                     if regenerating_opacity:
                         min_opacity = 0
                     size_threshold = None
