@@ -111,6 +111,12 @@ class Scene:
         else:
             init_gaussians_from_pcd(self.gaussians, scene_info.point_cloud, self.cameras_extent * args.spatial_scaling_lr_mult)
 
+        import threading
+        self.lock = threading.RLock()
+        self.was_updated = threading.Event()
+        self.was_updated.set()
+
+
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
         save_gaussians_ply(self.gaussians, os.path.join(point_cloud_path, "point_cloud.ply"))

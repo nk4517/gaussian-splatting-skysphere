@@ -144,10 +144,14 @@ class CamNaka:
 
 
 class SimpleGUI(CamNaka):
-    def __init__(self, scene_lock: Optional[threading.RLock] = None):
+    def __init__(self):
         super().__init__()
 
-        self.scene_lock = scene_lock
+        self.e_want_to_render = threading.Event()
+        self.e_want_to_render.clear()
+        self.e_finished_rendering = threading.Event()
+        self.e_finished_rendering.set()
+
         self.scene: Scene | None = None
 
         self.g_renderer = CUDARenderer()
@@ -367,26 +371,29 @@ class SimpleGUI(CamNaka):
 
             self.show_controls()
 
-            if self.scene is not None and self.scene_lock is not None:
-                if self.scene_lock.acquire(timeout=1/20):
+            if self.scene is not None:
+                self.e_finished_rendering.clear()
+                self.e_want_to_render.set()
 
+                if self.scene.was_updated.is_set():
+                    self.scene.was_updated.clear()
+                    self.need_rasterize = True
+
+                with self.scene.lock:
                     try:
-                        if getattr(self.scene, "was_updated", True):
-                            self.scene.was_updated = False
-                            self.need_rasterize = True
-
                         if self.viewpoint_camera is None:
                             k = list(self.scene.train_cameras.keys())[0]
                             cam: Camera = self.scene.train_cameras[k][self.cam_idx]
-
                             self.upd_cam_viewport(cam)
 
-                        self.g_renderer.rasterize(self.scene, self.viewpoint_camera)
+                        with torch.no_grad():
+                            self.g_renderer.rasterize(self.scene, self.viewpoint_camera)
 
                     except Exception as e:
                         print_exc()
                     finally:
-                        self.scene_lock.release()
+                        self.e_want_to_render.clear()
+                        self.e_finished_rendering.set()
 
             self.g_renderer.draw()
 

@@ -113,7 +113,7 @@ def loss_depth_grad(depth, img):
 
 
 def training(conf: GaussianSplattingConf, debug_from,
-             network_gui: Optional[NetworkGUI], gui, scene_lock: threading.RLock):
+             network_gui: Optional[NetworkGUI], gui):
 
     opt = conf.optimization_params
     dataset = conf.model_params
@@ -186,9 +186,10 @@ def training(conf: GaussianSplattingConf, debug_from,
         #     with torch.no_grad():
         #         network_gui.tick(opt, pipe, dataset, gaussians, iteration, background)
 
-        from time import sleep
-        sleep(0)
-        scene_lock.acquire()
+        if gui and gui.e_want_to_render.is_set():
+            gui.e_finished_rendering.wait()
+
+        scene.lock.acquire(blocking=True)
 
         iter_start.record()
 
@@ -601,9 +602,9 @@ def training(conf: GaussianSplattingConf, debug_from,
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path / f"chkpnt{iteration}.pth")
 
-        scene.was_updated = True
-        torch.cuda.synchronize()
-        scene_lock.release()
+        scene.was_updated.set()
+        scene.lock.release()
+        # torch.cuda.synchronize()
 
     unload_cam_data(scene)
 
@@ -786,8 +787,7 @@ def main():
 
     from tiny_renderer.minigui import SimpleGUI
 
-    scene_lock = threading.RLock()
-    gui = SimpleGUI(scene_lock)
+    gui = SimpleGUI()
 
     t0 = threading.Thread(target=t0_fn, args=(gui,))
     t0.start()
@@ -796,7 +796,7 @@ def main():
     # network_gui = NetworkGUI(args.ip, args.port)
     network_gui = None
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(conf, args.debug_from, network_gui, gui, scene_lock)
+    training(conf, args.debug_from, network_gui, gui)
 
     # All done
     print("\nTraining complete.")
