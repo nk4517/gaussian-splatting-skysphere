@@ -60,9 +60,9 @@ class GaussianModel:
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
         self._skysphere = torch.empty(0)
-        self.max_radii2D = torch.empty(0)
-        self.xyz_gradient_accum = torch.empty(0)
-        self.denom = torch.empty(0)
+
+        self.statblock = StatBlock()
+
         self.optimizer = None
         self.percent_dense = 0
         self.spatial_lr_scale = 0
@@ -78,9 +78,7 @@ class GaussianModel:
             self._rotation,
             self._opacity,
             self._skysphere,
-            self.max_radii2D,
-            self.xyz_gradient_accum,
-            self.denom,
+            *self.statblock.capture(),
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
         )
@@ -94,14 +92,13 @@ class GaussianModel:
         self._rotation, 
         self._opacity,
         self._skysphere,
-        self.max_radii2D, 
-        xyz_gradient_accum, 
-        denom,
+        *stablock_data,
         opt_dict, 
         self.spatial_lr_scale) = model_args
+
+        self.statblock.restore(stablock_data)
+
         self.training_setup(training_args)
-        self.xyz_gradient_accum = xyz_gradient_accum
-        self.denom = denom
         self.optimizer.load_state_dict(opt_dict)
 
     @property
@@ -212,12 +209,12 @@ class GaussianModel:
          self._rotation,
          self._skysphere) = self.params_from_points3d(fused_point_cloud, fused_colors)
 
-        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), dtype=torch.float, device="cuda")
+        self.statblock.create_stats_vars(self.get_xyz.shape[0])
 
     def training_setup(self, training_args):
+        self.statblock.create_stats_vars(self._xyz.shape[0])
+
         self.percent_dense = training_args.percent_dense
-        self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
 
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
@@ -352,7 +349,7 @@ class GaussianModel:
 
         self.active_sh_degree = sh_degree
 
-        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), dtype=torch.float, device="cuda")
+        self.statblock.create_stats_vars(self.get_xyz.shape[0])
 
 
     def replace_tensor_to_optimizer(self, tensor, name):
@@ -400,10 +397,8 @@ class GaussianModel:
         self._rotation = optimizable_tensors["rotation"]
         self._skysphere = optimizable_tensors["skysphere"]
 
-        self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
+        self.statblock.shrink_stats_by_mask(valid_points_mask)
 
-        self.denom = self.denom[valid_points_mask]
-        self.max_radii2D = self.max_radii2D[valid_points_mask]
 
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
@@ -445,9 +440,8 @@ class GaussianModel:
         self._rotation = optimizable_tensors["rotation"]
         self._skysphere = optimizable_tensors["skysphere"]
 
-        self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        self.statblock.expand_stats_by_N(new_xyz.shape[0])
+
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, N=2, kl_threshold=None):
         n_init_points = self.get_xyz.shape[0]
@@ -647,12 +641,6 @@ class GaussianModel:
         t_idx = indices[None, ...].to(xyz_selected.device)
 
         return kl_div, t_idx
-
-
-    def add_densification_stats(self, viewspace_point_tensor, update_filter):
-        self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
-        self.denom[update_filter] += 1
-
 
     def densify_from_depthmap(self, viewpoint_cam, depth, mask, gt_image, skyness=0.5):
         assert depth.shape == mask.shape == gt_image.shape[1:]

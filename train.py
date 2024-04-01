@@ -278,9 +278,10 @@ def training(conf: GaussianSplattingConf, debug_from,
             # Densification
             if iteration < opt.densify_until_iter:
 
-                # Keep track of max radii in image-space for pruning
-                gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+                gaussians.statblock.add_densification_stats(
+                    viewspace_point_tensor, visibility_filter,
+                    radii, render_pkg["n_touched"], render_pkg["splat_depths"],
+                    viewpoint_cam.focal_x)
 
                 if iteration > opt.densify_from_iter and not c2f_phase and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval and not c2f_phase else None
