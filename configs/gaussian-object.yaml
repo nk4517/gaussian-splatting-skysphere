@@ -42,11 +42,14 @@ optimization_params:
   normal_loss: false
   depth_loss: false
   depth2normal_loss: false
-  semitransparent_loss: false
   lambda_l1_normal: 0.01
   lambda_cos_normal: 0.01
   lambda_dssim: 0.2
+
+  semitransparent_loss: false
   lambda_semitransparent: 0.001
+  semitransparent_from_iter: 5000
+  semitransparent_until_iter: 7000
 
 #  splat_shape:
   flatten_loss: false
