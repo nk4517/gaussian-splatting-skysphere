@@ -89,25 +89,21 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, load_mask=F
         T = np.array(extr.tvec)
 
         if intr.model=="SIMPLE_PINHOLE":
-            focal_length_x = intr.params[0]
-            FovY = focal2fov(focal_length_x, height)
-            FovX = focal2fov(focal_length_x, width)
-        elif intr.model=="PINHOLE":
-            focal_length_x = intr.params[0]
-            focal_length_y = intr.params[1]
-            FovY = focal2fov(focal_length_y, height)
-            FovX = focal2fov(focal_length_x, width)
+            fx, cx, cy = intr.params[:3]
+            fy = fx
+        elif intr.model in ("PINHOLE", "OPENCV"):
+            fx, fy, cx, cy = intr.params[:4]
         else:
             assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
 
         datas_path = Path(images_folder).parent
         image_path = (Path(images_folder) / extr.name).absolute()
+
         image = Image.open(image_path)
 
-        fx_orig, fy_orig, cx_orig, cy_orig = intr.params
         K = np.array([
-            [fx_orig, 0, cx_orig],
-            [0, fy_orig, cy_orig],
+            [fx, 0, cx],
+            [0, fy, cy],
             [0, 0, 1],
         ])
 
@@ -115,13 +111,12 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, load_mask=F
         # sky mask
         sky_mask = None
         if load_skymask:
-            sky_mask = try_load_mask(extr.name, datas_path, ("skymask", "sky_mask", "sky-mask", "masks", "mask"))
+            sky_mask = try_load_1ch(extr.name, datas_path, ("skymask", "sky_mask", "sky-mask", "masks", "mask"))
 
         # objects mask
         gt_mask = None
         if load_mask:
-            gt_mask = try_load_mask(extr.name, datas_path, ("mask", "masks"))
-
+            gt_mask = try_load_1ch(extr.name, datas_path, ("mask", "masks"))
 
         normals = None
         if load_normal:
@@ -149,7 +144,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, load_mask=F
     return cam_infos
 
 
-def try_load_mask(image_name: str, datas_path: Path, subfolders=("mask",)) -> Optional[np.ndarray]:
+def try_load_1ch(image_name: str, datas_path: Path, subfolders=("mask",)) -> Optional[np.ndarray]:
     mask = None
     for sf in subfolders:
         d = datas_path / sf

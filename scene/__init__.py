@@ -48,7 +48,16 @@ class Scene:
 
         source_path = Path(args.source_path)
 
-        if (source_path / "sparse").is_dir():
+        elif args.waymo_calibs: # and (source_path / "calibs.dump").is_file() and (source_path / "images").is_dir():
+            from scene.dataset_readers_waymo import readWaymoExportInfo
+
+            scene_info = readWaymoExportInfo(args.source_path, args.eval,
+                                             load_skymask=args.load_skymask, N_random_init_pts=args.N_random_init_pts)
+        elif args.dreamer_calibs: # and (source_path / "calibs.dump").is_file() and (source_path / "images").is_dir():
+            from scene.dataset_readers_dreamer import readDREAMER
+            scene_info = readDREAMER(args.source_path, args.eval,
+                                     load_skymask=args.load_skymask, N_random_init_pts=args.N_random_init_pts)
+        elif (source_path / "sparse").is_dir():
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval,
                                                           load_mask=args.load_mask, load_skymask=args.load_skymask,
                                                           load_normal=args.load_normal, load_depth=args.load_depth,
