@@ -41,6 +41,20 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
+
+def monodisp(gt_depth: torch.Tensor, dyn_depth: torch.Tensor, loss_type: str = "l1"):
+    t_d = torch.median(dyn_depth, dim=-1, keepdim=True).values
+    s_d = torch.mean(torch.abs(dyn_depth - t_d), dim=-1, keepdim=True)
+    dyn_depth_norm = (dyn_depth - t_d) / s_d
+
+    t_gt = torch.median(gt_depth, dim=-1, keepdim=True).values
+    s_gt = torch.mean(torch.abs(gt_depth - t_gt), dim=-1, keepdim=True)
+    gt_depth_norm = (gt_depth - t_gt) / s_gt
+
+    disp_loss = torch.abs((dyn_depth_norm - gt_depth_norm)).mean() if loss_type == "l1" else ((dyn_depth_norm - gt_depth_norm) ** 2).mean()
+    return dyn_depth_norm, gt_depth_norm, disp_loss
+
+
 def training(conf: GaussianSplattingConf, debug_from,
              network_gui: Optional[NetworkGUI], gui, scene_lock: threading.RLock):
 
