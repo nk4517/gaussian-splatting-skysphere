@@ -257,8 +257,16 @@ def training(conf: GaussianSplattingConf, debug_from,
         #     opacity_mask = render_pkg['rendered_alpha'] > 0.0
         #     opacity_mask = opacity_mask.unsqueeze(0).repeat(3, 1, 1)
 
-        # Loss
         gt_image = viewpoint_cam.original_image.cuda()
+
+        if gt_image.shape[0] == 1:
+            image = gray(image)
+
+        if not res_controller.maximum_cam_res_reached:
+            gt_image = VF.gaussian_blur(gt_image.unsqueeze(0), sigma=[0.33, 0.33], kernel_size=[3, 3]).squeeze(0)
+
+        # Loss
+
         if (opt.masked_image or opt.silhouette_loss) and viewpoint_cam.mask is not None:
             gt_mask = viewpoint_cam.mask.squeeze().cuda()
             gt_mask_bool = viewpoint_cam.mask.bool().squeeze().cuda()
