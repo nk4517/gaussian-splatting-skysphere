@@ -1,0 +1,87 @@
+model_params:
+  sh_degree: 3
+  spatial_scaling_lr_mult: 0.25
+  N_random_init_pts: -1
+  source_path: ???
+  model_path: ???
+  images: images
+  resolution: -1
+  white_background: false
+  data_device: cuda
+  load_mask: false
+  load_skymask: false
+  load_normal: false
+  load_depth: false
+  eval: false
+
+progress_params:
+  save_gaussians_iterations: [7000]
+  testing_iterations: [1000, 7000]
+
+pipeline_params:
+  convert_SHs_python: false
+  compute_cov3D_python: false
+  debug: false
+
+optimization_params:
+  iterations: 30000
+
+  position_lr_init: 0.00016
+  position_lr_final: 1.6e-06
+  position_lr_delay_mult: 0.01
+  position_lr_max_steps: 30000
+
+  feature_lr: 0.0025
+  opacity_lr: 0.05
+  scaling_lr: 0.005
+  rotation_lr: 0.001
+  skysphere_lr: 0.01
+
+  percent_dense: 0.01
+
+  normal_loss: false
+  depth_loss: false
+  depth2normal_loss: false
+  semitransparent_loss: false
+  lambda_l1_normal: 0.01
+  lambda_cos_normal: 0.01
+  lambda_dssim: 0.2
+  lambda_semitransparent: 0.001
+
+#  splat_shape:
+  flatten_loss: false
+  flatten_aniso_loss: false
+  isotropy_loss: true
+  lambda_flatten: 0.5
+  lambda_aniso: 5.0
+  lambda_iso: 0.25
+  aniso_ratio_threshold: 2.5
+
+#  skysphere:
+  skysphere_loss: false
+  sky_depth_loss: false
+  lambda_skysphere_mask: 0.2
+  lambda_skysphere_dist: 0.2
+  lambda_skysphere_entropy: 0.2
+  lambda_sky_depth: 0.001
+  skysphere_radius_in_cam_extents: 100
+
+  densification_interval: 100
+  opacity_reset_interval: 3000
+  densify_from_iter: 500
+  densify_until_iter: 15000
+  densify_grad_threshold: 0.0002
+  random_background: false
+
+  silhouette_loss: false
+  silhouette_loss_type: bce # bce/mse
+  lambda_silhouette: 2.5
+
+  kl_threshold: 0.1
+
+  divide_ratio: 0.8
+  default_sigma: 0.3
+  c2f: false
+  c2f_max_sigma: 300.0
+  c2f_every_step: 100
+

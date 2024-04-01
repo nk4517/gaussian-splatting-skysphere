@@ -1,0 +1,31 @@
+model_params:
+  source_path: x:\_ai\_demos\_gsplat\_datasets\youtube02
+  model_path: x:\_ai\_demos\_gsplat\_datasets\youtube02\towel-my-111-c2f-start30
+  eval: false
+  sh_degree: 1
+#  load_skymask: true
+#  load_mask: true
+  resolution: 4
+#  N_random_init_pts: 200
+
+progress_params:
+  save_gaussians_iterations: [7000]
+  save_checkoint_iterations: [7000]
+
+optimization_params:
+
+  random_background: true
+
+#  skysphere_loss: true
+#  sky_depth_loss: true
+#  silhouette_loss: true
+
+  kl_threshold: 0.1
+
+  iterations: 7000
+  densify_until_iter: 6500
+
+  densification_interval: 100
+
+#  c2f: true
+#  c2f_max_sigma: 20

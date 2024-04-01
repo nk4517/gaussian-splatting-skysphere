@@ -10,6 +10,7 @@
 #
 
 import os
+from pathlib import Path
 import random
 import json
 from utils.system_utils import searchForMaxIteration
@@ -22,17 +23,18 @@ class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(self, args: ModelParams, gaussians: GaussianModel,
+                 load_iteration: int | str | Path | None = None, shuffle=True, resolution_scales=[1.0]):
         """b
         :param path: Path to colmap scene main folder.
         """
-        self.model_path = args.model_path
+        self.model_path = Path(args.model_path)
         self.loaded_iter = None
         self.gaussians = gaussians
 
         if load_iteration:
             if load_iteration == -1:
-                self.loaded_iter = searchForMaxIteration(os.path.join(self.model_path, "point_cloud"))
+                self.loaded_iter = searchForMaxIteration(self.model_path / "point_cloud")
             else:
                 self.loaded_iter = load_iteration
             print("Loading trained model at iteration {}".format(self.loaded_iter))
@@ -40,18 +42,21 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
 
-        if os.path.exists(os.path.join(args.source_path, "sparse")):
+        source_path = Path(args.source_path)
+
+        if (source_path / "sparse").is_dir():
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval,
-                                                          sky_seg=args.sky_seg, load_normal=args.load_normal, load_depth=args.load_depth,
-                                                          SLV_num_gaussians=args.SLV_num_gaussians)
-        elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
+                                                          load_mask=args.load_mask, load_skymask=args.load_skymask,
+                                                          load_normal=args.load_normal, load_depth=args.load_depth,
+                                                          N_random_init_pts=args.N_random_init_pts)
+        elif (source_path / "transforms_train.json").is_file():
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
         else:
             assert False, "Could not recognize scene type!"
 
         if not self.loaded_iter:
-            with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
+            with open(scene_info.ply_path, 'rb') as src_file, open(self.model_path / "input.ply" , 'wb') as dest_file:
                 dest_file.write(src_file.read())
             json_cams = []
             camlist = []
@@ -61,7 +66,7 @@ class Scene:
                 camlist.extend(scene_info.train_cameras)
             for id, cam in enumerate(camlist):
                 json_cams.append(camera_to_JSON(id, cam))
-            with open(os.path.join(self.model_path, "cameras.json"), 'w') as file:
+            with open(self.model_path / "cameras.json", 'w') as file:
                 json.dump(json_cams, file)
 
         if shuffle:
@@ -77,10 +82,14 @@ class Scene:
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
 
         if self.loaded_iter:
-            self.gaussians.load_ply(os.path.join(self.model_path,
-                                                           "point_cloud",
-                                                           "iteration_" + str(self.loaded_iter),
-                                                           "point_cloud.ply"))
+            if isinstance(self.loaded_iter, int):
+                ply_fname = self.model_path / "point_cloud" / f"iteration_{self.loaded_iter}" / "point_cloud.ply"
+            elif isinstance(self.loaded_iter, str) or isinstance(self.loaded_iter, Path):
+                ply_fname = Path(self.loaded_iter)
+            else:
+                raise NotImplementedError("loaded_iter: " + repr(self.loaded_iter))
+
+            self.gaussians.load_ply(ply_fname)
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 

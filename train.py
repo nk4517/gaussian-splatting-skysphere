@@ -11,11 +11,13 @@
 
 import math
 import os, sys
+from pathlib import Path
 from typing import Optional
 from random import randint
 import uuid
 from argparse import ArgumentParser, Namespace
 
+from omegaconf import OmegaConf
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
@@ -26,7 +28,7 @@ from gaussian_renderer.network_gui import NetworkGUI
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
 from utils.image_utils import psnr
-from arguments import ModelParams, PipelineParams, OptimizationParams
+from arguments import OptimizationParams, GaussianSplattingConf
 from utils.skysphere_utils import add_skysphere_points3d
 
 try:
@@ -35,9 +37,13 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
-def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams,
-             testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from,
+def training(conf: GaussianSplattingConf, debug_from,
              network_gui: Optional[NetworkGUI]):
+
+    opt = conf.optimization_params
+    dataset = conf.model_params
+    pipe = conf.pipeline_params
+    progress = conf.progress_params
 
     if opt.c2f:
         opt.divide_ratio = 0.7
@@ -53,12 +59,13 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
     print(f"Set divide_ratio to {opt.divide_ratio}")
 
     first_iter = 0
-    tb_writer = prepare_output_and_logger(dataset)
+    tb_writer = prepare_output_and_logger(conf)
     gaussians = GaussianModel(dataset.sh_degree, divide_ratio=opt.divide_ratio)
-    scene = Scene(dataset, gaussians)
+    scene = Scene(dataset, gaussians, load_iteration=progress.load_checkoint or progress.load_gaussians_path)
     gaussians.training_setup(opt)
-    if checkpoint:
-        (model_params, first_iter) = torch.load(checkpoint)
+
+    if not progress.load_gaussians_path and progress.load_checkoint_path:
+        (model_params, first_iter) = torch.load(progress.load_checkoint_path)
         gaussians.restore(model_params, opt)
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
@@ -217,8 +224,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
-            if (iteration in saving_iterations):
+            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), progress.testing_iterations, scene, render, (pipe, background))
+            if iteration in progress.save_gaussians_iterations:
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
@@ -243,9 +250,9 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
 
-            if (iteration in checkpoint_iterations):
+            if iteration in progress.save_checkoint_iterations:
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
-                torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+                torch.save((gaussians.capture(), iteration), scene.model_path / f"chkpnt{iteration}.pth")
 
 
 def update_loss_from_splat_shape(gaussians: GaussianModel, opt: OptimizationParams, loss):
@@ -313,24 +320,27 @@ def update_loss_from_skydepth(gaussians: GaussianModel, opt: OptimizationParams,
     return loss
 
 
-def prepare_output_and_logger(args):    
-    if not args.model_path:
+def prepare_output_and_logger(conf: GaussianSplattingConf):
+    model_path = conf.model_params.model_path
+    if not model_path:
         if os.getenv('OAR_JOB_ID'):
             unique_str=os.getenv('OAR_JOB_ID')
         else:
             unique_str = str(uuid.uuid4())
-        args.model_path = os.path.join("./output/", unique_str[0:10])
+        conf.model_params.model_path = os.path.join("./output/", unique_str[0:10])
         
     # Set up output folder
-    print("Output folder: {}".format(args.model_path))
-    os.makedirs(args.model_path, exist_ok = True)
-    with open(os.path.join(args.model_path, "cfg_args"), 'w') as cfg_log_f:
-        cfg_log_f.write(str(Namespace(**vars(args))))
+    print("Output folder: {}".format(model_path))
+    os.makedirs(model_path, exist_ok = True)
+
+    OmegaConf.save(conf, Path(model_path) / "cfg_args.yaml")
+    # with open(os.path.join(args.model_path, "cfg_args"), 'w') as cfg_log_f:
+    #     cfg_log_f.write(str(Namespace(**vars(args))))
 
     # Create Tensorboard writer
     tb_writer = None
     if TENSORBOARD_FOUND:
-        tb_writer = SummaryWriter(args.model_path)
+        tb_writer = SummaryWriter(model_path)
     else:
         print("Tensorboard not available: not logging progress")
     return tb_writer
@@ -376,22 +386,38 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
 def main():
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
-    lp = ModelParams(parser)
-    op = OptimizationParams(parser)
-    pp = PipelineParams(parser)
+    parser.add_argument("--config", required=True, help="path to the yaml config file")
+
     parser.add_argument('--ip', type=str, default="127.0.0.1")
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[1, 1_000, 7_000, 17_500, 30_000])
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
-    parser.add_argument("--start_checkpoint", type=str, default = None)
-    args = parser.parse_args(sys.argv[1:])
-    args.save_iterations.append(args.iterations)
-    
-    print("Optimizing " + args.model_path)
+
+    args, extras = parser.parse_known_args()
+
+    try:
+        schema = OmegaConf.structured(GaussianSplattingConf)
+        conf_default: GaussianSplattingConf = OmegaConf.load("configs/gaussian-object.yaml")
+        conf_default = OmegaConf.merge(schema, conf_default)
+
+        conf_user: GaussianSplattingConf = OmegaConf.load(args.config, )
+        conf = OmegaConf.merge(conf_default, conf_user)
+    except omegaconf.errors.OmegaConfBaseException as e:
+        print(e, file=sys.stderr)
+        sys.exit(-1)
+
+    op = conf.optimization_params
+    lp = conf.model_params
+    pg = conf.progress_params
+
+    if op.iterations not in pg.save_gaussians_iterations:
+        pg.save_gaussians_iterations.append(op.iterations)
+
+    if op.iterations not in pg.testing_iterations:
+        pg.testing_iterations.append(op.iterations)
+
+    print("Optimizing " + lp.model_path)
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
@@ -399,7 +425,7 @@ def main():
     # Start GUI server, configure and run training
     network_gui = NetworkGUI(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, network_gui)
+    training(conf, args.debug_from, network_gui)
 
     # All done
     print("\nTraining complete.")
