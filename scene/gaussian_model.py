@@ -539,7 +539,7 @@ class BaseGaussianModel:
 
         self.densify_and_clone(grads, max_grad, extent, kl_threshold=kl_threshold, min_dist=min_dist)
         # self.densify_and_clone_by_proximity(scene_extent=extent, kl_threshold=kl_threshold)
-        self.densify_and_split(grads, max_grad, extent, kl_threshold=kl_threshold)
+        self.densify_and_split(grads, max_grad, extent * cam_res_down, kl_threshold=opt.kl_threshold)
         # if kl_threshold:
         self.kl_merge(grads, max_grad, extent, kl_threshold=0.1)#kl_threshold/4)
 
