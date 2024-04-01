@@ -6,7 +6,7 @@ model_params:
   model_path: ???
   images: images
 
-  resolution_scales: [1, 0.25]
+  resolution_scales: [1, 4]
 
   white_background: false
   data_device: cuda
