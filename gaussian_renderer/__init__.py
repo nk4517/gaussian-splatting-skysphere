@@ -141,7 +141,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     if False:
         density = torch.ones_like(means3D)
 
-        render_opacity, _, _, _, _, _ = rasterizer(
+        render_opacity, _, _, _, _, _, _, _ = rasterizer(
             means3D = means3D,
             means2D = means2D,
             shs = None,
