@@ -1,10 +1,13 @@
+import math
 import threading
+from traceback import print_exc
 from typing import Optional
 
 import glfw
 import OpenGL.GL as gl
 import imgui
 from imgui.integrations.glfw import GlfwRenderer
+import torch
 
 from scene.cameras import Camera, MiniCam, DynamicMiniCamKRT, MiniCamKRT
 from tiny_renderer.renderer_cuda import CUDARenderer
@@ -22,6 +25,8 @@ class CamNaka:
         self.prev_x = None
         self.prev_y = None
         self.zoom = 1
+        self.yaw = 0
+        self.pitch = 0
 
         self.viewpoint_camera: Camera | MiniCam | None = None
 
@@ -50,6 +55,7 @@ class CamNaka:
                 self.prev_y = ypos
 
                 self.viewpoint_camera.init_derived()
+                self.need_rasterize = True
 
             elif self.is_leftmouse_pressed:
                 if not hasattr(self.viewpoint_camera, "R_initial"):
@@ -78,14 +84,16 @@ class CamNaka:
                 rr2 = torch.tensor(rr2, dtype=torch.float, device=self.viewpoint_camera.R_initial.device)
 
                 rt = torch.eye(4, dtype=torch.float, device=self.viewpoint_camera.R_initial.device)
-                rt[:3, :3] = self.viewpoint_camera.R_initial
+                rt[:3, :3] = self.viewpoint_camera.R_initial.T # glm
                 rt[:3, 3] = self.viewpoint_camera.T_initial
 
                 xx = (rr1.inverse() @ (rr2 @ rt))
 
-                self.viewpoint_camera.R = xx[:3, :3]
+                self.viewpoint_camera.R = xx[:3, :3].T # glm
                 self.viewpoint_camera.T = xx[:3, 3]
                 self.viewpoint_camera.init_derived()
+
+                self.need_rasterize = True
 
 
             else:
@@ -126,6 +134,7 @@ class CamNaka:
             self.viewpoint_camera.K[1, 1] = fy
 
             self.viewpoint_camera.init_derived()
+            self.need_rasterize = True
 
 
     def key_callback(self, window, key, scancode, action, mods, *args, **kwargs):
@@ -149,6 +158,14 @@ class SimpleGUI(CamNaka):
 
         self.show_control_window = False
 
+
+    @property
+    def need_rasterize(self):
+        return self.g_renderer.need_rerender
+
+    @need_rasterize.setter
+    def need_rasterize(self, val):
+        self.g_renderer.need_rerender = val
 
 
     def init(self):
@@ -198,6 +215,9 @@ class SimpleGUI(CamNaka):
         #self.g_renderer.set_render_reso(width-MENU_WIDTH, height)
         # g_camera.update_resolution(height, width)
         # g_renderer.set_render_reso(width, height)
+
+        self.prev_y = None
+        self.prev_x = None
         self.upd_cam_viewport(self.viewpoint_camera)
 
     def show_controls(self):
@@ -230,7 +250,7 @@ class SimpleGUI(CamNaka):
         # imgui.text("This is the Control window")
 
         changed, scale_modifier = imgui.slider_float(
-            "", self.g_renderer._scale_modifier, 0.02, 1, "scale=%.2f"
+            "", self.g_renderer._scale_modifier, 0.01, 1, "scale=%.2f"
         )
         imgui.same_line()
         if imgui.button(label="reset"):
@@ -331,6 +351,8 @@ class SimpleGUI(CamNaka):
         self.g_renderer.set_render_reso(w1, h1)
         gl.glViewport(0, 0, w1, h1)
 
+        self.need_rasterize = True
+
 
     def main_loop(self):
         while not glfw.window_should_close(self.window):
@@ -345,11 +367,14 @@ class SimpleGUI(CamNaka):
 
             self.show_controls()
 
-            if self.scene_lock is not None:
-                try:
-                    self.scene_lock.acquire(timeout=1/20)
+            if self.scene is not None and self.scene_lock is not None:
+                if self.scene_lock.acquire(timeout=1/20):
 
-                    if self.scene is not None:
+                    try:
+                        if getattr(self.scene, "was_updated", True):
+                            self.scene.was_updated = False
+                            self.need_rasterize = True
+
                         if self.viewpoint_camera is None:
                             k = list(self.scene.train_cameras.keys())[0]
                             cam: Camera = self.scene.train_cameras[k][self.cam_idx]
@@ -357,10 +382,10 @@ class SimpleGUI(CamNaka):
                             self.upd_cam_viewport(cam)
 
                         self.g_renderer.rasterize(self.scene, self.viewpoint_camera)
-                except Exception as e:
-                    print(e)
-                finally:
-                    if self.scene_lock._is_owned():
+
+                    except Exception as e:
+                        print_exc()
+                    finally:
                         self.scene_lock.release()
 
             self.g_renderer.draw()

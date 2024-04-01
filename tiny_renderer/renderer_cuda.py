@@ -10,8 +10,12 @@ import torch
 from cuda import cudart as cu
 
 from scene import GaussianModel, Scene
-from scene.cameras import Camera
+from scene.cameras import Camera, MiniCam
 from .util import compile_shaders
+
+from tiny_renderer.colormaps111 import apply_colormap, cm_data_magma_r, cm_data_magma
+
+from tiny_renderer.colormaps111 import cm_data_twilight, cm_data_sunglight
 
 
 class GaussianRenderBase:
@@ -24,7 +28,6 @@ class GaussianRenderBase:
 
 
     def __init__(self):
-        self.gaussians = None
         self.render_mode = 0
         self._reduce_updates = True
 
@@ -190,6 +193,7 @@ def pseudocolor_from_depth_gradient(depth):
 
 
 class CUDARenderer(GaussianRenderBase):
+    RENDERMODE_LEARNING_GRADIENT = -7
     RENDERMODE_DOMINATION = -6
     RENDERMODE_BLURINESS = -5
     RENDERMODE_DEPTH_IMAGE_GRADIENT = -4
@@ -198,6 +202,7 @@ class CUDARenderer(GaussianRenderBase):
     RENDERMODE_NORMALS_PSEUDOCOLORS = -2
 
     render_modes = OrderedDict([
+        ("Learning gradient", RENDERMODE_LEARNING_GRADIENT),
         ("Domination", RENDERMODE_DOMINATION),
         ("Bluriness", RENDERMODE_BLURINESS),
         ("Depth (pseudoRGB)", RENDERMODE_DEPTH_SPEUDOCOLOR),
@@ -384,7 +389,7 @@ class CUDARenderer(GaussianRenderBase):
             # dist = torch.norm(scene.gaussians.get_xyz - viewpoint_camera.camera_center[None, ...], dim=1)
             # pse1 = normalize(dist.clamp(1e-6, 1e6).square().unsqueeze(0)).permute(1, 0).repeat(1, 3)
 
-            sky_mask = scene.gaussians.get_skysphere.squeeze(1) > 0.6
+            sky_mask = skyness.squeeze(1) > 0.6
 
             sq = scene.gaussians.statblock.filter3d_sq.sqrt().unsqueeze(1)
 
@@ -395,20 +400,36 @@ class CUDARenderer(GaussianRenderBase):
                 pse1 = sq
                 pse1[sky_mask, :] = 0
 
-                from tiny_renderer.colormaps111 import cm_data_magma_r
-                from tiny_renderer.colormaps111 import apply_colormap
+                q1 = pse1.quantile(0.05)
+                q2 = pse1.quantile(0.95)
 
-                from tiny_renderer.colormaps111 import cm_data_twilight, cm_data_sunglight
+                pse1 = ((pse1 - q1) / (q2 - q1)).clamp(0, 1)
 
                 pse1 = apply_colormap(pse1, cm_data_sunglight).contiguous()
 
                 # pse1 = pse1.repeat(1, 3).contiguous()
 
-                color, _, _, _, _, _ = self.render111(scene, viewpoint_camera, override_colors=pse1, overmax_opacity=False)
+                color, _, _, _, _, _, _, _ = self.render111(scene, viewpoint_camera, override_colors=pse1, overmax_opacity=False)
                 img = color.permute(1, 2, 0)
 
             else:
                 img = color.permute(1, 2, 0)
+
+        elif self.render_mode == self.RENDERMODE_LEARNING_GRADIENT:
+
+            denom = scene.gaussians.statblock.n_touched_accum
+            wpx = scene.gaussians.statblock.xyz_gradient_accum / denom  # scene.gaussians.statblock.gradWpx()
+            wpx[~wpx.isfinite()] = 0
+
+            q1 = wpx.quantile(0.05)
+            q2 = wpx.quantile(0.95)
+
+            pse1 = ((wpx - q1) / (q2 - q1)).clamp(0, 1)
+
+            pse1 = apply_colormap(pse1, cm_data_magma).contiguous()
+
+            color, _, _, _, _, _, _, _ = self.render111(scene, viewpoint_camera, override_colors=pse1, overmax_opacity=False)
+            img = color.permute(1, 2, 0)
 
         else:
             img = color.permute(1, 2, 0)
@@ -429,7 +450,7 @@ class CUDARenderer(GaussianRenderBase):
     def render111(self, scene, viewpoint_camera, override_colors=None, overmax_opacity=False):
         with torch.no_grad():
 
-            bg_color = torch.Tensor([0., 0., 0]).float().cuda()
+            bg_color = torch.Tensor([0.4, 0.3, 0.4]).float().cuda()
             kernel_size = 0.1
 
             tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
@@ -480,7 +501,7 @@ class CUDARenderer(GaussianRenderBase):
 
             cov3D_precomp = None
 
-            color, radii, depth, alpha, n_touched, splat_depths = rasterizer(
+            color, radii, depth, alpha, n_touched, splat_depths, n_dominated, dominating_splat = rasterizer(
                 means3D=means3D.contiguous(),
                 means2D=None,
                 shs=sh,
@@ -491,7 +512,7 @@ class CUDARenderer(GaussianRenderBase):
                 cov3D_precomp=cov3D_precomp
             )
 
-        return color, radii, depth, alpha, n_touched, splat_depths
+        return color, radii, depth, alpha, n_touched, splat_depths, n_dominated, dominating_splat
 
 
     def transfert1(self, img_rgba: torch.Tensor):
