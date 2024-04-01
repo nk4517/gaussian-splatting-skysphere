@@ -115,13 +115,55 @@ void main()
 }
 """
 
+
+def pseudocolor_from_splat_orientation(scene, viewpoint_camera: Camera | MiniCam):
+
+    from utils.general_utils import build_rotation
+
+    means3D = scene.gaussians.get_xyz
+    rot = scene.gaussians.get_rotation
+    scal, opa = scene.gaussians.get_scal_opa_w_3D
+
+    rotations_mat = build_rotation(rot)
+
+    # scales = scene.gaussians.get_scaling
+
+    min_scales = torch.argmin(scal, dim=1)
+    indices = torch.arange(min_scales.shape[0])
+    normal = rotations_mat[indices, :, min_scales]
+
+    # convert normal direction to the camera; calculate the normal in the camera coordinate
+    view_dir = means3D - viewpoint_camera.camera_center
+    normal = normal * ((((view_dir * normal).sum(dim=-1) < 0) * 1 - 0.5) * 2)[..., None]
+
+    R_w2c = viewpoint_camera.R.T
+    normal = (R_w2c @ normal.transpose(0, 1)).transpose(0, 1)
+
+    colors = normal / 2 + 0.5
+
+    sky_mask = scene.gaussians.get_skysphere.squeeze(1) > 0.6
+    colors[sky_mask, :] = 0
+
+    return colors
+
+
+def pseudocolor_from_depth_gradient(depth):
+    from utils.general_utils import pseudo_normals_from_depthmap_gradient
+
+    nn = pseudo_normals_from_depthmap_gradient(depth.squeeze())
+    img = nn.permute(1, 2, 0)
+    return img
+
+
 class CUDARenderer(GaussianRenderBase):
+    RENDERMODE_BLURINESS = -5
     RENDERMODE_DEPTH_IMAGE_GRADIENT = -4
     RENDERMODE_DEPTH_SPEUDOCOLOR = -3
     RENDERMODE_DEPTH_FROM_RASTERIZER = -1
     RENDERMODE_NORMALS_PSEUDOCOLORS = -2
 
     render_modes = OrderedDict([
+        ("Bluriness", RENDERMODE_BLURINESS),
         ("Depth (pseudoRGB)", RENDERMODE_DEPTH_SPEUDOCOLOR),
         ("Depth (Rasterizer)", RENDERMODE_DEPTH_FROM_RASTERIZER),
         ("Normals", RENDERMODE_NORMALS_PSEUDOCOLORS),
