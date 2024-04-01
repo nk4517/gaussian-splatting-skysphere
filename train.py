@@ -67,14 +67,7 @@ def training(conf: GaussianSplattingConf, debug_from,
     progress = conf.progress_params
 
 
-    if opt.c2f:
-        opt.divide_ratio = 0.7
-        splat_sigma = opt.c2f_max_sigma
-        c2f_phase = True
-    else:
-        dataset.N_random_init_pts = -1
-        splat_sigma = opt.default_sigma
-        c2f_phase = False
+    kernel_size = 0.1 # opt.default_sigma
 
     assert not (opt.skysphere_loss and opt.silhouette_loss)
 
