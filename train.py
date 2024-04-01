@@ -457,6 +457,9 @@ def training(conf: GaussianSplattingConf, debug_from,
 
         scene_lock.release()
 
+    unload_cam_data(scene)
+
+
 
 def update_loss_from_splat_shape(gaussians: GaussianModel, opt: OptimizationParams, loss):
 
