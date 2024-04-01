@@ -448,21 +448,21 @@ class BaseGaussianModel:
         # а ещё грохнуть небо, слишком отклоняющееся от сферы и слишком далёкую землю
 
 
-        if not skysphere_radius > 0:
-            # всё считается миром.
-            xyz_world = self.get_xyz.detach()
-            sertain_world_mask = torch.ones_like(prune_mask)
-        else:
+        if opt.skysphere_radius > 0:
             sertain_world_mask = (self.get_skysphere.detach() < 0.25).squeeze()
             sertain_sky_mask = (self.get_skysphere.detach() > 0.75).squeeze()
 
             sky_dist = torch.norm(self.get_xyz[sertain_sky_mask].detach(), dim=1).squeeze()
-            bad_sky = (sky_dist < skysphere_radius * 0.9) | (sky_dist > skysphere_radius * 1.1)
+            bad_sky = (sky_dist < opt.skysphere_radius * 0.9) | (sky_dist > opt.skysphere_radius * 1.1)
             xyz_world = self.get_xyz[sertain_world_mask].detach()
-            bad_world_dist = torch.norm(xyz_world, dim=1).squeeze() >= skysphere_radius / 3
+            bad_world_dist = torch.norm(xyz_world, dim=1).squeeze() >= opt.skysphere_radius / 3
             print(f"bad skysphere distance: {torch.count_nonzero(bad_sky)} sky, {torch.count_nonzero(bad_world_dist)} world")
             prune_mask[sertain_sky_mask] |= bad_sky
             prune_mask[sertain_world_mask] |= bad_world_dist
+        else:
+            # всё считается миром.
+            xyz_world = self.get_xyz.detach()
+            sertain_world_mask = torch.ones_like(prune_mask)
 
         # не, без этих фоновых точек - слишком геометрию поводит
         if kill_outliers and extent > 0:
@@ -496,17 +496,23 @@ class BaseGaussianModel:
             pass
 
 
-        big_points_ws = self.get_scaling.max(dim=1).values > extent / largest_point_divider
-        ws = (big_points_ws & sertain_world_mask)
-
-        if smallest_point_divider > 0:
-            small_points_ws = self.get_scaling.max(dim=1).values < extent / smallest_point_divider
-            ws |= small_points_ws
-            print(f"big_points: {torch.count_nonzero(big_points_ws)}, small_points: {torch.count_nonzero(small_points_ws)}")
-        else:
+        if opt.largest_point_divider > 0:
+            big_points_ws = self.get_scaling.max(dim=1).values > extent / opt.largest_point_divider
+            ws = (big_points_ws & sertain_world_mask)
             print(f"big_points: {torch.count_nonzero(big_points_ws)}")
+        else:
+            ws = None
 
-        prune_mask |= ws
+        if opt.smallest_point_divider > 0:
+            small_points_ws = self.get_scaling.max(dim=1).values < extent / smallest_point_divider * cam_res_down
+            print(f"small_points: {torch.count_nonzero(small_points_ws)}")
+            if ws is not None:
+                ws |= small_points_ws
+            else:
+                ws = small_points_ws
+
+        if ws is not None:
+            prune_mask |= stoch1(ws, 0.5)
 
         self.prune_points(prune_mask)
 
@@ -514,6 +520,9 @@ class BaseGaussianModel:
         denom = self.statblock.n_touched_accum
         grads = self.statblock.xyz_gradient_accum / denom
         grads[grads.isnan()] = 0.0
+
+        # ну попробую самые яркие сплилить
+        max_grad = float(grads[grads.isfinite() & (grads > 0)].quantile(opt.split_quantile))
 
         # weights = self.n_touched / self.n_touched.sum()
         # grads_w = self.xyz_gradient_accum * weights
