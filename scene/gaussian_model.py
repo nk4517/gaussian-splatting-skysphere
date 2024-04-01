@@ -463,11 +463,11 @@ class BaseGaussianModel:
         self.prune_points(prune_mask)
 
 
-    def update_mask_with_KL(self, kl_threshold, selected_pts_mask, op_name="unk"):
+    def update_mask_with_KL(self, kl_threshold, selected_pts_mask, op_name="unk", min_dist=None):
         if torch.count_nonzero(selected_pts_mask) == 0:
             return selected_pts_mask
 
-        kl_div, _ = self.calc_kl_div(selected_pts_mask)
+        kl_div, _ = self.calc_kl_div(selected_pts_mask, min_dist)
 
         if kl_div is not None:
             kl_thres_mask = kl_div > kl_threshold
@@ -475,7 +475,7 @@ class BaseGaussianModel:
             N_pre_kl = int(kl_thres_mask.shape[0])
             N_post_kl = int(kl_thres_mask.count_nonzero())
 
-            print(f"[kl {op_name}]: {kl_thres_mask.shape[0]}(-{N_pre_kl - N_post_kl}) of {selected_pts_mask.shape[0]}", )
+            print(f"[kl+d {op_name}]: {kl_thres_mask.shape[0]}(-{N_pre_kl - N_post_kl}) of {selected_pts_mask.shape[0]}", )
             kl_full_mask = torch.zeros_like(selected_pts_mask)
             kl_full_mask[selected_pts_mask] = kl_thres_mask
 
@@ -530,7 +530,8 @@ class BaseGaussianModel:
         self.prune_points(prune_filter)
 
 
-    def calc_kl_div(self, selected_pts_mask=None):
+
+    def calc_kl_div(self, selected_pts_mask=None, min_dist=None):
 
         xyz = self._xyz.detach()
         rot = self._rotation.detach()
@@ -544,7 +545,9 @@ class BaseGaussianModel:
         if xyz_selected.shape[0] == 0:
             return None, None
 
-        indices = knn_points(xyz_selected[None, ...], xyz[None, ...], K=2).idx[0]
+        KNN = knn_points(xyz_selected[None, ...], xyz[None, ...], K=2)
+        indices = KNN.idx[0]
+        distances = KNN.dists[0, :, 1]
 
         # первая точка из индекса knn. она-же - запрошенная, сама себе ближайшая
         idx_pt_itself = indices[:, 0]
@@ -562,6 +565,9 @@ class BaseGaussianModel:
                                  xyz_1, rotation_1_q, scaling_diag_1)
 
         t_idx = indices[None, ...].to(xyz_selected.device)
+
+        if min_dist is not None:
+            kl_div[distances < min_dist] = torch.nan
 
         return kl_div, t_idx
 

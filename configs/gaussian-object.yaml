@@ -90,6 +90,9 @@ optimization_params:
 
   kl_threshold: 0.1
 
+  largest_point_divider: 5
+  smallest_point_divider: 2500
+
   divide_ratio: 0.8
   default_sigma: 0.3
   c2f: false

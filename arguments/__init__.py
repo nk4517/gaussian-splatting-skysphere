@@ -148,6 +148,9 @@ class OptimizationParams:
 
     kl_threshold: float | None = None
 
+    largest_point_divider: int = 5
+    smallest_point_divider: int = 2_500
+
     divide_ratio: float = 0.8
     default_sigma: float = 0.3
     c2f: bool = False
