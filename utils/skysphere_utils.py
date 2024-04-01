@@ -151,30 +151,3 @@ def fibonacci_sphere(samples: int = 1000, radius: float = 300):
 
     return points
 
-
-def project_points_to_image(points: torch.Tensor, cam: 'MiniCamKRT'):
-    num_points, _ = points.shape
-
-    ones = torch.ones(num_points, 1, dtype=points.dtype, device=points.device)
-    points_homogeneous = torch.cat([points, ones], dim=1)
-
-    RT = torch.eye(4, device=cam.R.device)
-    RT[:3, :3] = cam.R.transpose(0, 1)  # GLM
-    RT[:3, 3] = cam.T.squeeze()
-
-    points_camera_frame_homogeneous = torch.matmul(points_homogeneous, RT.transpose(0, 1))
-    points_camera_frame = points_camera_frame_homogeneous[:, :3] / points_camera_frame_homogeneous[:, 3:4]
-
-    pixel_coords_homogeneous = torch.matmul(points_camera_frame, cam.K.transpose(0, 1))
-    points_image = torch.round(pixel_coords_homogeneous[:, :2] / pixel_coords_homogeneous[:, 2:3]).to(torch.int32)
-
-    valid_indices = (
-            (points_image[:, 0] >= 0)
-            & (points_image[:, 0] < cam.image_width)
-            & (points_image[:, 1] >= 0)
-            & (points_image[:, 1] < cam.image_height)
-            & (points_camera_frame[:, 2] > cam.znear)
-            & (points_camera_frame[:, 2] < cam.zfar)
-    )
-
-    return points_image, valid_indices
