@@ -137,6 +137,8 @@ def training(conf: GaussianSplattingConf, debug_from,
         #     with torch.no_grad():
         #         network_gui.tick(opt, pipe, dataset, gaussians, iteration, background)
 
+        from time import sleep
+        sleep(0)
         scene_lock.acquire()
 
         iter_start.record()
