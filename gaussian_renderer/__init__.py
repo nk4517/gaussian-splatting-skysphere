@@ -102,7 +102,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # They will be excluded from value updates used in the splitting criteria.
     return_dict = {"render": rendered_image,
                    "viewspace_points": screenspace_points,
-                   "visibility_filter": n_touched > 0,
+                   "visibility_filter": radii > 0,
                    "radii": radii,
                    "rendered_depth": rendered_depth,  # depth
                    "rendered_alpha": rendered_alpha,  # acc
