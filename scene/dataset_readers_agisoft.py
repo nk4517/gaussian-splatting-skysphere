@@ -14,6 +14,15 @@ from utils.graphics_utils import BasicPointCloud
 
 inv = np.linalg.inv
 
+xform = np.array([
+    [1,  0,  0, 0],
+    [0, -1,  0, 0],
+    [0,  0, -1, 0],
+    [0,  0,  0, 1],
+], dtype=np.float32)
+
+# 	xform_pts = np.concatenate((pts1, np.ones((pts1.shape[0], 1))), axis=1) @ xform.T pts_world = xform_pts[:, :3]
+# 	xform_normals = np.concatenate((normals1, np.zeros((normals1.shape[0], 1))), axis=1) @ xform.T normals_world = xform_normals[:, :3]
 
 def readAgisoftExportInfo(path: str | Path, eval, llffhold=8, load_skymask=False, N_random_init_pts=None):
 
@@ -50,9 +59,52 @@ def readAgisoftExportInfo(path: str | Path, eval, llffhold=8, load_skymask=False
 
             C2W_xform0 = poses[(frame_id, waymo_to_agisoft_I)]
 
+            # C2W_xform0 = xform @ C2W_xform0
+
             W2C_xform = inv(C2W_xform0)
 
             skymask = None
+
+            monodepth = None
+            # monodepth_path = path / "monodepth" / waymo_cam / f"{frame_id:04d}.png"
+            # if monodepth_path.is_file():
+            #     monodepth = cv2.imread(str(monodepth_path), cv2.IMREAD_GRAYSCALE) / 256
+            #
+            #
+            #     def _calc_rays(res_x, res_y, K):
+            #         # (0,0,0) -> Z=1.0
+            #
+            #         xx, yy = np.meshgrid(
+            #             np.arange(0, res_x),
+            #             np.arange(0, res_y)
+            #         )
+            #
+            #         rays = np.dstack((xx, yy)).reshape(-1, 2)
+            #         rays = np.hstack((rays, np.ones((rays.shape[0], 1))))
+            #         rays = np.linalg.inv(K) @ rays.T
+            #         rays = rays.T
+            #         return rays.astype(np.float32).reshape(h, w, 3)
+            #
+            #     from modules.filters.zmap_curvature import calc_normals_and_curvature_covariance
+            #
+            #     rays_map = _calc_rays(w, h, K)
+            #
+            #     points3d_map = (rays_map * (monodepth + 1)[..., None])
+            #     curv, normals, dot = calc_normals_and_curvature_covariance(points3d_map, max_grazing_angle_deg=90, min_d=1., max_d=10, half_w=10)
+            #     from modules.common_img import turbo_img
+            #     import cv2
+            #     from math_funcs import ocv_to_gl
+            #
+            #     frame = ocv_to_gl(normals)
+            #     normals_map_bgr = ((frame[:, :] * 128) + 128)
+            #     normals_map_bgr[normals_map_bgr[:, :, :] > 255] = 255
+            #     normals_map_bgr[normals_map_bgr[:, :, :] < 0] = 0
+            #     normals_map_bgr = normals_map_bgr.astype(np.uint8)
+            #     cv2.imwrite("normals.png", normals_map_bgr)
+            #
+            #
+            #     turbo_img("curv.png", curv)
+            #     print(1)
 
             R = W2C_xform[:3, :3]
             T = W2C_xform[:3, 3]
@@ -63,7 +115,7 @@ def readAgisoftExportInfo(path: str | Path, eval, llffhold=8, load_skymask=False
             cam_name = img_path.relative_to(path).with_suffix("").as_posix()
             cam_info = CameraInfo(uid=frame_id*10+camera_angles_ALL.index(waymo_cam)+1, K=K, R=R, T=T, image=image,
                                   image_path=str(img_path.absolute()), image_name=cam_name, width=w, height=h,
-                                  sky_mask=skymask)
+                                  sky_mask=skymask, depth=monodepth)
 
             # if waymo_cam == "FRONT":
             # # Split into training and testing based on llffhold
@@ -86,6 +138,9 @@ def readAgisoftExportInfo(path: str | Path, eval, llffhold=8, load_skymask=False
         positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
         colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 256
 
+        # xform_pts = np.concatenate((positions, np.ones((positions.shape[0], 1))), axis=1) @ xform.T
+        # positions = xform_pts[:, :3]
+
         pcd_all = BasicPointCloud(
             points=np.ascontiguousarray(positions, dtype=np.float32),
             normals=np.ascontiguousarray(np.zeros_like(positions), dtype=np.float32),
@@ -94,7 +149,7 @@ def readAgisoftExportInfo(path: str | Path, eval, llffhold=8, load_skymask=False
 
         pp = open3d.geometry.PointCloud(open3d.utility.Vector3dVector(pcd_all.points))
         pp.colors = open3d.utility.Vector3dVector(pcd_all.colors)
-        open3d.io.write_point_cloud("naka.ply", pp)
+        open3d.io.write_point_cloud(str(path / "ZZinput.ply"), pp)
         print(1)
 
     if N_random_init_pts > 0:
@@ -118,7 +173,7 @@ def readAgisoftExportInfo(path: str | Path, eval, llffhold=8, load_skymask=False
         pcd_all = BasicPointCloud(points=xyz, colors=shs, normals=np.zeros((num_pts, 3)))
 
 
-    ply_path = str(path / "input.ply")
+    ply_path = str(path / "ZZinput.ply")
 
     scene_info = SceneInfo(point_cloud=pcd_all,
                            train_cameras=train_cam_infos,
