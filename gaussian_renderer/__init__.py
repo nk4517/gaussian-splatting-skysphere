@@ -106,14 +106,14 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # They will be excluded from value updates used in the splitting criteria.
     return_dict = {"render": rendered_image,
                    "viewspace_points": screenspace_points,
-                   "visibility_filter": radii > 0,
+                   "visibility_filter": (radii.detach() > 0),
                    "radii": radii,
                    "rendered_depth": rendered_depth,  # depth
                    "rendered_alpha": rendered_alpha,  # acc
-                   "n_touched": n_touched,
-                   "splat_depths": splat_depths,
-                   "n_dominated": n_dominated,
-                   "dominating_splat": dominating_splat
+                   "n_touched": n_touched.detach(),
+                   "splat_depths": splat_depths.detach(),
+                   "n_dominated": n_dominated.detach(),
+                   "dominating_splat": dominating_splat.detach()
                    }
 
     if return_normal:
