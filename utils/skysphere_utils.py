@@ -8,14 +8,13 @@ from scene.cameras import project_points_to_image
 
 def add_skysphere_points3d(scene: Scene, gaussians: GaussianModel, skysphere_radius: float, full_skysphere_points: int = 50_000):
     cameras = scene.getTrainCameras()
-    N_cameras = len(cameras)
 
     skysphere_pts3d = fibonacci_sphere(samples=full_skysphere_points, radius=skysphere_radius).float().to("cuda")
 
     populated = torch.zeros(skysphere_pts3d.shape[0], dtype=torch.bool, device="cuda")
 
     # import open3d
-    # pp = open3d.geometry.PointCloud(open3d.utility.Vector3dVector(pts3d))
+    # pp = open3d.geometry.PointCloud(open3d.utility.Vector3dVector(skysphere_pts3d))
     # open3d.io.write_point_cloud(str("sky.ply"), pp)
 
     for cam in cameras:
