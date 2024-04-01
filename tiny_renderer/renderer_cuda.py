@@ -355,7 +355,19 @@ class CUDARenderer(GaussianRenderBase):
 
 
         elif self.render_mode == self.RENDERMODE_DEPTH_FROM_RASTERIZER:
-            img = normalize(depth).clamp(0, 1).permute(1, 2, 0)
+
+            sky_splats = (scene.gaussians.get_skysphere > 0.66).squeeze(1)
+            sky_invdepth = scene.gaussians.statblock.min_invDepth[sky_splats].mean() * 0.8
+
+            invdepth_mask = depth < (sky_invdepth * scene.getTrainCameras()[0].focal_x)
+            d1: torch.Tensor = depth[invdepth_mask]
+            q1 = d1.quantile(0.05)
+            q2 = d1.quantile(0.95)
+
+            d2 = ((depth - q1) / (q2 - q1)).clamp(0, 1)
+
+            img = apply_colormap(d2, cm_data_sunglight).contiguous()
+
 
         elif self.render_mode == self.RENDERMODE_BLURINESS:
             # accumed = scene.gaussians.xyz_gradient_accum / scene.gaussians.n_touched_accum
