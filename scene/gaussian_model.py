@@ -388,17 +388,22 @@ class BaseGaussianModel:
         if kl_threshold:
             selected_pts_mask = self.update_mask_with_KL(kl_threshold, selected_pts_mask, "split")
 
-        stds = self.get_scaling[selected_pts_mask].repeat(N,1)
-        means =torch.zeros((stds.size(0), 3),device="cuda")
+        self.split_by_mask(selected_pts_mask, N_new)
+
+
+    def split_by_mask(self, selected_pts_mask, N_new=2):
+        stds = self.get_scaling[selected_pts_mask].repeat(N_new, 1)
+        means = torch.zeros((stds.size(0), 3), device="cuda")
         samples = torch.normal(mean=means, std=stds)
-        rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
-        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
-        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (self.divide_ratio*N))
-        new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
-        new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
-        new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
-        new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
-        new_skysphere = self._skysphere[selected_pts_mask].repeat(N, 1)
+        rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N_new, 1, 1)
+
+        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N_new, 1)
+        new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N_new, 1) / (self.divide_ratio * N_new))
+        new_rotation = self._rotation[selected_pts_mask].repeat(N_new, 1)
+        new_features_dc = self._features_dc[selected_pts_mask].repeat(N_new, 1, 1)
+        new_features_rest = self._features_rest[selected_pts_mask].repeat(N_new, 1, 1)
+        new_opacity = self._opacity[selected_pts_mask].repeat(N_new, 1)
+        new_skysphere = self._skysphere[selected_pts_mask].repeat(N_new, 1)
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_skysphere)
 
