@@ -511,6 +511,18 @@ class GaussianModel:
         prune_mask[sertain_sky_mask] |= bad_sky
         prune_mask[sertain_world_mask] |= bad_world_dist
 
+        # не, без этих фоновых точек - слишком геометрию поводит
+        if 0:
+            dists_to_nearest: torch.Tensor = knn_points(xyz_world[None, ...], xyz_world[None, ...], K=2).dists[0, :, 1]
+            mean_dist_between = dists_to_nearest.mean()
+            sigma = dists_to_nearest.std()
+            lone_pts = dists_to_nearest > (mean_dist_between + 7*sigma)
+            print(f"lone world points: {torch.count_nonzero(lone_pts)}")
+            prune_by_lonelesnes = torch.zeros_like(prune_mask)
+            prune_by_lonelesnes[sertain_world_mask] = lone_pts
+
+            prune_mask |= prune_by_lonelesnes
+
         if max_screen_size:
             max_extent = torch.full_like(self._scaling[:, 0], fill_value=0.1 * extent)
             # небо далеко, и пиксели там большие.
