@@ -148,6 +148,39 @@ def pseudocolor_from_splat_orientation(scene, viewpoint_camera: Camera | MiniCam
     return colors
 
 
+def simple_hash(index):
+    # Using a simple speudo-hash function to generate a pseudo-random color
+    r = (index * 67 % 256) / 255.0
+    g = (index * 129 % 256) / 255.0
+    b = (index * 193 % 256) / 255.0
+    r[index == -1] = 0.5
+    g[index == -1] = 0.5
+    g[index == -1] = 0.5
+    return torch.tensor([r, g, b])
+
+
+def pseudocolor_from_domination(dominating_splats):
+
+    # Create an empty tensor for the colored image
+    #colored_img = torch.zeros_like(dominating_splats, dtype=torch.float32).unsqueeze(-1).expand(-1, -1, 3)
+
+    colored_img = torch.zeros((*dominating_splats.shape, 3), dtype=torch.float32, device=dominating_splats.device)
+    colored_img[..., 0] = ((dominating_splats * 67) % 256) / 255
+    colored_img[..., 1] = ((dominating_splats * 129) % 256) / 255
+    colored_img[..., 2] = ((dominating_splats * 193) % 256) / 255
+    colored_img[dominating_splats == -1, :] = 0.5
+
+    # # Assign a color to each pixel based on its splat index
+    # for splats, color in colors.items():
+    #     mask = dominating_splats == splats
+    #     colored_img[mask] = color
+
+    # Permute the tensor to match the expected color channel layout [3, H, W]
+    # colored_img = colored_img.permute(2, 0, 1)
+
+    return colored_img
+
+
 def pseudocolor_from_depth_gradient(depth):
     from utils.general_utils import pseudo_normals_from_depthmap_gradient
 
