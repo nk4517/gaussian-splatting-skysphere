@@ -71,8 +71,17 @@ def training(conf: GaussianSplattingConf, debug_from,
         (model_params, first_iter) = torch.load(progress.load_checkoint_path)
         gaussians.restore(model_params, opt)
 
-    if not opt.skysphere_radius > 0 and opt.skysphere_radius_in_cam_extents > 0:
-        opt.skysphere_radius = float(scene.cameras_extent * opt.skysphere_radius_in_cam_extents)
+    if not progress.load_gaussians_path and not progress.load_checkoint_path:
+        if dataset.load_skymask:
+            if not opt.skysphere_radius > 0 and opt.skysphere_radius_in_cam_extents > 0:
+                opt.skysphere_radius = float(scene.cameras_extent * opt.skysphere_radius_in_cam_extents)
+        else:
+            opt.skysphere_radius = -1
+
+        with torch.no_grad():
+            if dataset.load_skymask:
+                add_skysphere_points3d(scene, gaussians, opt.skysphere_radius)
+
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -80,9 +89,6 @@ def training(conf: GaussianSplattingConf, debug_from,
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
-    with torch.no_grad():
-        if dataset.load_skymask:
-            add_skysphere_points3d(scene, gaussians, opt.skysphere_radius)
 
 
     viewpoint_stack = None
