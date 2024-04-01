@@ -380,7 +380,12 @@ class BaseGaussianModel:
         new_features_dc = self._features_dc[selected_pts_mask].repeat(N_new, 1, 1)
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N_new, 1, 1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N_new, 1)
-        new_skysphere = self._skysphere[selected_pts_mask].repeat(N_new, 1)
+
+        old_sky = self.get_skysphere[selected_pts_mask].repeat(N_new, 1)
+        # суть в том, чтобы переместить 0 в центр 50/50, а потом уменьшить на четверть уверенность. и вернуть 0 обратно в в 50/50
+        v = 0.75
+        sky_w_lower_confidence = ((old_sky - 0.5) * v) + 0.5
+        new_skysphere = self.inverse_skysphere_activation(sky_w_lower_confidence)
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_skysphere)
 

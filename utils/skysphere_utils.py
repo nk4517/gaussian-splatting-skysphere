@@ -53,7 +53,8 @@ def add_skysphere_points3d(scene: Scene, gaussians: GaussianModel, skysphere_rad
 
             # turbo_img(f"sky_fib_{cam.uid:04d}.png", skymask_to_propagate.cpu().numpy(), norm_min=0, norm_max=1)
 
-            params = gaussians.params_from_points3d(pts3d_to_add, colors_to_add, None, skyness=1)
+            # маска может быть не очень точной, особенно по краям
+            params = gaussians.params_from_points3d(pts3d_to_add, colors_to_add, None, skyness=0.75)
             if params is not None:
                 gaussians.densification_postfix(*params)
 
