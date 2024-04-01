@@ -202,7 +202,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8, sky_seg=False, load_normal=False, load_depth=False):
+def readColmapSceneInfo(path, images, eval, llffhold=8, load_mask=False, load_skymask=False, load_normal=False, load_depth=False, N_random_init_pts=None):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -239,10 +239,30 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, sky_seg=False, load_norm
         except:
             xyz, rgb, _ = read_points3D_text(txt_path)
         storePly(ply_path, xyz, rgb)
-    try:
-        pcd = fetchPly(ply_path)
-    except:
-        pcd = None
+
+    if N_random_init_pts > 0:
+
+        cam_pos = []
+        for k in cam_extrinsics.keys():
+            cam_pos.append(cam_extrinsics[k].tvec)
+        cam_pos = np.array(cam_pos)
+        min_cam_pos = np.min(cam_pos)
+        max_cam_pos = np.max(cam_pos)
+        mean_cam_pos = (min_cam_pos + max_cam_pos) / 2.0
+        cube_mean = (max_cam_pos - min_cam_pos) * 1.5
+
+        max_coord = (max_cam_pos - min_cam_pos) * 3 - (cube_mean - mean_cam_pos)
+        xyz = np.random.random((N_random_init_pts, 3)) * max_coord
+        print(f"Generating SLV point cloud ({N_random_init_pts})...")
+
+        shs = np.random.random((N_random_init_pts, 3))
+        pcd = BasicPointCloud(points=xyz, colors=shs, normals=np.zeros((N_random_init_pts, 3)))
+
+    else:
+        try:
+            pcd = fetchPly(ply_path)
+        except:
+            pcd = None
 
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,
